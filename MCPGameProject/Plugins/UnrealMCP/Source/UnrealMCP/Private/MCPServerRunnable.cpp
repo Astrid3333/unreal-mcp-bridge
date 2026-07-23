@@ -45,7 +45,15 @@ uint32 FMCPServerRunnable::Run()
         {
             UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Client connection pending, accepting..."));
             
-            ClientSocket = MakeShareable(ListenerSocket->Accept(TEXT("MCPClient")));
+            ClientSocket = MakeShareable(ListenerSocket->Accept(TEXT("MCPClient")),
+                    [](FSocket* SocketToDestroy)
+                    {
+                        if (SocketToDestroy)
+                        {
+                            SocketToDestroy->Close();
+                            ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(SocketToDestroy);
+                        }
+                    });
             if (ClientSocket.IsValid())
             {
                 UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Client connection accepted"));
@@ -85,18 +93,38 @@ uint32 FMCPServerRunnable::Run()
                             {
                                 // Execute command
                                 FString Response = Bridge->ExecuteCommand(CommandType, JsonObject->GetObjectField(TEXT("params")));
+                                Response += TEXT("\n");
                                 
                                 // Log response for debugging
                                 UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Sending response: %s"), *Response);
                                 
-                                // Send response
-                                int32 BytesSent = 0;
-                                if (!ClientSocket->Send((uint8*)TCHAR_TO_UTF8(*Response), Response.Len(), BytesSent))
+                                // Send response (loop until all bytes are sent, socket is non-blocking)
+                                FTCHARToUTF8 Utf8Response(*Response);
+                                const uint8* ResponseData = (const uint8*)Utf8Response.Get();
+                                int32 TotalLen = Utf8Response.Length();
+                                int32 TotalSent = 0;
+                                bool bSendFailed = false;
+
+                                while (TotalSent < TotalLen)
                                 {
-                                    UE_LOG(LogTemp, Warning, TEXT("MCPServerRunnable: Failed to send response"));
+                                    int32 BytesSent = 0;
+                                    if (!ClientSocket->Send(ResponseData + TotalSent, TotalLen - TotalSent, BytesSent))
+                                    {
+                                        UE_LOG(LogTemp, Warning, TEXT("MCPServerRunnable: Failed to send response (sent %d/%d bytes)"), TotalSent, TotalLen);
+                                        bSendFailed = true;
+                                        break;
+                                    }
+                                    if (BytesSent == 0)
+                                    {
+                                        FPlatformProcess::Sleep(0.005f);
+                                        continue;
+                                    }
+                                    TotalSent += BytesSent;
                                 }
-                                else {
-                                    UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Response sent successfully, bytes: %d"), BytesSent);
+
+                                if (!bSendFailed)
+                                {
+                                    UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Response sent successfully, total bytes: %d"), TotalSent);
                                 }
                             }
                             else
@@ -120,8 +148,18 @@ uint32 FMCPServerRunnable::Run()
                         {
                             UE_LOG(LogTemp, Verbose, TEXT("MCPServerRunnable: Socket would block, continuing..."));
                             bShouldBreak = false;
-                            // Small sleep to prevent tight loop when no data
-                            FPlatformProcess::Sleep(0.01f);
+
+                            bool bPendingNew = false;
+                            if (ListenerSocket->HasPendingConnection(bPendingNew) && bPendingNew)
+                            {
+                                UE_LOG(LogTemp, Warning, TEXT("MCPServerRunnable: Nueva conexion pendiente, cerrando cliente actual para dar paso"));
+                                bShouldBreak = true;
+                            }
+                            else
+                            {
+                                // Small sleep to prevent tight loop when no data
+                                FPlatformProcess::Sleep(0.01f);
+                            }
                         }
                         // Check for other transient errors we might want to tolerate
                         else if (LastError == SE_EINTR) // Interrupted system call
@@ -139,6 +177,11 @@ uint32 FMCPServerRunnable::Run()
                             break;
                         }
                     }
+                }
+
+                if (ClientSocket.IsValid())
+                {
+                    ClientSocket.Reset();
                 }
             }
             else

@@ -366,4 +366,510 @@ def register_editor_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
 
+
+    @mcp.tool()
+    def spawn_foliage_instances(
+        ctx: Context,
+        mesh_path: str,
+        landscape_name: str,
+        count: int = 100,
+        region_center: List[float] = [0.0, 0.0],
+        region_radius: float = 5000.0,
+        min_scale: float = 0.8,
+        max_scale: float = 1.5
+    ) -> Dict[str, Any]:
+        """Scatter instanced foliage of a static mesh across a region of a landscape.
+        
+        Args:
+            ctx: The MCP context
+            mesh_path: Path to the static mesh asset (e.g. "/Engine/BasicShapes/Cone.Cone")
+            landscape_name: Name of the target landscape actor
+            count: Number of instances to attempt to spawn
+            region_center: The [x, y] world center of the scatter region
+            region_radius: Radius in world units of the scatter region
+            min_scale: Minimum random uniform scale per instance
+            max_scale: Maximum random uniform scale per instance
+            
+        Returns:
+            Dict containing spawn results (requested_count, spawned_count, success)
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            if not isinstance(region_center, list) or len(region_center) != 2:
+                logger.error(f"Invalid region_center format: {region_center}. Must be a list of 2 float values.")
+                return {"success": False, "message": "Invalid region_center format. Must be a list of 2 float values."}
+            
+            params = {
+                "mesh_path": mesh_path,
+                "landscape_name": landscape_name,
+                "count": int(count),
+                "region_center": [float(v) for v in region_center],
+                "region_radius": float(region_radius),
+                "min_scale": float(min_scale),
+                "max_scale": float(max_scale)
+            }
+            
+            logger.info(f"Spawning foliage '{mesh_path}' on landscape '{landscape_name}' with params: {params}")
+            response = unreal.send_command("spawn_foliage_instances", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Foliage spawn response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error spawning foliage: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error spawning foliage: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def set_actor_material(
+        ctx: Context,
+        actor_name: str,
+        material_path: str,
+        slot_index: int = 0
+    ) -> Dict[str, Any]:
+        """Assign a material to a StaticMeshActor.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the target actor
+            material_path: Path to the material asset (e.g. "/Game/Materials/M_Bark")
+            slot_index: Material slot index to override (default 0)
+            
+        Returns:
+            Dict containing success status
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "actor_name": actor_name,
+                "material_path": material_path,
+                "slot_index": int(slot_index)
+            }
+            
+            logger.info(f"Setting material on '{actor_name}': {params}")
+            response = unreal.send_command("set_actor_material", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Set material response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error setting material: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting material: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def get_actor_material(
+        ctx: Context,
+        actor_name: str,
+        slot_index: int = 0
+    ) -> Dict[str, Any]:
+        """Get the material currently assigned to a StaticMeshActor's slot.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the target actor
+            slot_index: Material slot index to inspect (default 0)
+            
+        Returns:
+            Dict containing material_path, is_dynamic_instance, success
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "actor_name": actor_name,
+                "slot_index": int(slot_index)
+            }
+            
+            logger.info(f"Getting material on '{actor_name}': {params}")
+            response = unreal.send_command("get_actor_material", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Get material response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error getting material: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting material: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def create_dynamic_material_instance(
+        ctx: Context,
+        actor_name: str,
+        slot_index: int = 0
+    ) -> Dict[str, Any]:
+        """Create a UMaterialInstanceDynamic on a StaticMeshActor's slot so its parameters can be changed at runtime.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the target actor
+            slot_index: Material slot index to convert (default 0)
+            
+        Returns:
+            Dict containing dynamic_instance_name, success
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "actor_name": actor_name,
+                "slot_index": int(slot_index)
+            }
+            
+            logger.info(f"Creating dynamic material instance on '{actor_name}': {params}")
+            response = unreal.send_command("create_dynamic_material_instance", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Create dynamic material instance response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error creating dynamic material instance: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error creating dynamic material instance: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def set_material_scalar_parameter(
+        ctx: Context,
+        actor_name: str,
+        parameter_name: str,
+        value: float,
+        slot_index: int = 0
+    ) -> Dict[str, Any]:
+        """Set a scalar (float) parameter on a Material Instance, e.g. roughness, metallic, emissive strength.
+        
+        Automatically promotes the slot to a dynamic material instance if it isn't one already.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the target actor
+            parameter_name: Name of the scalar parameter as defined in the material
+            value: The float value to set
+            slot_index: Material slot index to target (default 0)
+            
+        Returns:
+            Dict containing success status
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "actor_name": actor_name,
+                "parameter_name": parameter_name,
+                "value": float(value),
+                "slot_index": int(slot_index)
+            }
+            
+            logger.info(f"Setting scalar parameter on '{actor_name}': {params}")
+            response = unreal.send_command("set_material_scalar_parameter", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Set scalar parameter response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error setting scalar parameter: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting scalar parameter: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def set_material_vector_parameter(
+        ctx: Context,
+        actor_name: str,
+        parameter_name: str,
+        r: float,
+        g: float,
+        b: float,
+        a: float = 1.0,
+        slot_index: int = 0
+    ) -> Dict[str, Any]:
+        """Set a vector/color parameter on a Material Instance, e.g. base color tint, emissive color.
+        
+        Automatically promotes the slot to a dynamic material instance if it isn't one already.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the target actor
+            parameter_name: Name of the vector parameter as defined in the material
+            r: Red channel (0.0-1.0, values above 1.0 allowed for HDR/emissive)
+            g: Green channel
+            b: Blue channel
+            a: Alpha channel (default 1.0)
+            slot_index: Material slot index to target (default 0)
+            
+        Returns:
+            Dict containing success status
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "actor_name": actor_name,
+                "parameter_name": parameter_name,
+                "value": {"r": float(r), "g": float(g), "b": float(b), "a": float(a)},
+                "slot_index": int(slot_index)
+            }
+            
+            logger.info(f"Setting vector parameter on '{actor_name}': {params}")
+            response = unreal.send_command("set_material_vector_parameter", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Set vector parameter response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error setting vector parameter: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting vector parameter: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def duplicate_actor(
+        ctx: Context,
+        actor_name: str,
+        new_name: str = "",
+        location_offset: List[float] = [0.0, 0.0, 0.0]
+    ) -> Dict[str, Any]:
+        """Clone an existing actor, copying its mesh, materials and other properties.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the source actor to duplicate
+            new_name: Label for the new actor (defaults to '<actor_name>_Copy' if empty)
+            location_offset: [x, y, z] offset applied to the new actor relative to the source
+            
+        Returns:
+            Dict containing source_actor, new_actor, success
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            if not isinstance(location_offset, list) or len(location_offset) != 3:
+                logger.error(f"Invalid location_offset format: {location_offset}. Must be a list of 3 float values.")
+                return {"success": False, "message": "Invalid location_offset format. Must be a list of 3 float values."}
+            
+            params = {
+                "actor_name": actor_name,
+                "new_name": new_name,
+                "location_offset": [float(v) for v in location_offset]
+            }
+            
+            logger.info(f"Duplicating actor '{actor_name}': {params}")
+            response = unreal.send_command("duplicate_actor", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Duplicate actor response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error duplicating actor: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error duplicating actor: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_actor_bounds(ctx: Context, actor_name: str) -> Dict[str, Any]:
+        """Get the world-space bounding box of an actor (origin and extent).
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the target actor
+            
+        Returns:
+            Dict containing origin {x,y,z}, box_extent {x,y,z}, min_z, max_z, success
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {"actor_name": actor_name}
+            
+            logger.info(f"Getting bounds for '{actor_name}'")
+            response = unreal.send_command("get_actor_bounds", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Get actor bounds response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error getting actor bounds: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting actor bounds: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def attach_actor_to_actor(
+        ctx: Context,
+        actor_name: str,
+        parent_actor_name: str,
+        socket_name: str = "",
+        attachment_rule: str = "KeepRelative"
+    ) -> Dict[str, Any]:
+        """Attach (parent) one actor to another, optionally at a specific socket.
+        
+        Args:
+            ctx: The MCP context
+            actor_name: Name of the actor to attach (the child)
+            parent_actor_name: Name of the actor to attach to (the parent)
+            socket_name: Optional socket name on the parent's mesh to attach to
+            attachment_rule: One of 'KeepRelative', 'KeepWorld', 'SnapToTarget' (default 'KeepRelative')
+            
+        Returns:
+            Dict containing success status
+        """
+        from unreal_mcp_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            valid_rules = ["KeepRelative", "KeepWorld", "SnapToTarget"]
+            if attachment_rule not in valid_rules:
+                logger.error(f"Invalid attachment_rule: {attachment_rule}. Must be one of {valid_rules}.")
+                return {"success": False, "message": f"Invalid attachment_rule. Must be one of {valid_rules}."}
+            
+            params = {
+                "actor_name": actor_name,
+                "parent_actor_name": parent_actor_name,
+                "socket_name": socket_name,
+                "attachment_rule": attachment_rule
+            }
+            
+            logger.info(f"Attaching '{actor_name}' to '{parent_actor_name}': {params}")
+            response = unreal.send_command("attach_actor_to_actor", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Attach actor response: {response}")
+            
+            if response.get("status") == "error":
+                error_message = response.get("error", "Unknown error")
+                logger.error(f"Error attaching actor: {error_message}")
+                return {"success": False, "message": error_message}
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error attaching actor: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+
     logger.info("Editor tools registered successfully")

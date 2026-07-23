@@ -56,4 +56,10 @@ public:
     // Property utilities
     static bool SetObjectProperty(UObject* Object, const FString& PropertyName, 
                                  const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage);
+    static bool SetStructPropertyByPath(UScriptStruct* Struct, void* StructPtr, const FString& PropertyPath,
+                                 const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage);
+    static bool GetObjectProperty(UObject* Object, const FString& PropertyName,
+                                 TSharedPtr<FJsonValue>& OutValue, FString& OutErrorMessage);
+    static bool GetStructPropertyByPath(UScriptStruct* Struct, const void* StructPtr, const FString& PropertyPath,
+                                 TSharedPtr<FJsonValue>& OutValue, FString& OutErrorMessage);
 }; 

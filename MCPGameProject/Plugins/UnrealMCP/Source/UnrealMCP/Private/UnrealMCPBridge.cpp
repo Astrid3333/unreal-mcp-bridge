@@ -234,7 +234,16 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_actor_property") ||
                      CommandType == TEXT("spawn_blueprint_actor") ||
                      CommandType == TEXT("focus_viewport") || 
-                     CommandType == TEXT("take_screenshot"))
+                     CommandType == TEXT("take_screenshot") ||
+                     CommandType == TEXT("set_actor_material") ||
+                     CommandType == TEXT("spawn_foliage_instances") ||
+                     CommandType == TEXT("get_actor_material") ||
+                     CommandType == TEXT("create_dynamic_material_instance") ||
+                     CommandType == TEXT("set_material_scalar_parameter") ||
+                     CommandType == TEXT("set_material_vector_parameter") ||
+                     CommandType == TEXT("duplicate_actor") ||
+                     CommandType == TEXT("get_actor_bounds") ||
+                     CommandType == TEXT("attach_actor_to_actor"))
             {
                 ResultJson = EditorCommands->HandleCommand(CommandType, Params);
             }
@@ -328,5 +337,19 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
         Promise.SetValue(ResultString);
     });
     
-    return Future.Get();
+    const double CommandTimeoutSeconds = 10.0;
+    if (Future.WaitFor(FTimespan::FromSeconds(CommandTimeoutSeconds)))
+    {
+        return Future.Get();
+    }
+
+    UE_LOG(LogTemp, Error, TEXT("UnrealMCPBridge: Command '%s' timed out waiting for GameThread after %.1fs (GameThread likely busy)"), *CommandType, CommandTimeoutSeconds);
+
+    TSharedPtr<FJsonObject> TimeoutResponse = MakeShareable(new FJsonObject);
+    TimeoutResponse->SetStringField(TEXT("status"), TEXT("error"));
+    TimeoutResponse->SetStringField(TEXT("error"), FString::Printf(TEXT("Command '%s' timed out waiting for GameThread (busy with shader compilation, asset loading, or a modal dialog)"), *CommandType));
+    FString TimeoutString;
+    TSharedRef<TJsonWriter<>> TimeoutWriter = TJsonWriterFactory<>::Create(&TimeoutString);
+    FJsonSerializer::Serialize(TimeoutResponse.ToSharedRef(), TimeoutWriter);
+    return TimeoutString;
 }

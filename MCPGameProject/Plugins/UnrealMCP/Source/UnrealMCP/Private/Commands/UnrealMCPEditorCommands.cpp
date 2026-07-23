@@ -1,4 +1,6 @@
 #include "Commands/UnrealMCPEditorCommands.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Engine.h"
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Editor.h"
 #include "EditorViewportClient.h"
@@ -20,6 +22,21 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/PostProcessVolume.h"
+#include "UObject/UObjectIterator.h"
+#include "LandscapeProxy.h"
+#include "InstancedFoliageActor.h"
+#include "FoliageType_InstancedStaticMesh.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Factories/MaterialFactoryNew.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "UObject/SavePackage.h"
+#include "PackageTools.h"
+#include "EngineUtils.h"
 
 FUnrealMCPEditorCommands::FUnrealMCPEditorCommands()
 {
@@ -60,10 +77,51 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     {
         return HandleSetActorProperty(Params);
     }
+    else if (CommandType == TEXT("set_actor_material"))
+    {
+        return HandleSetActorMaterial(Params);
+    }
+    else if (CommandType == TEXT("get_actor_material"))
+    {
+        return HandleGetActorMaterial(Params);
+    }
+    else if (CommandType == TEXT("create_dynamic_material_instance"))
+    {
+        return HandleCreateDynamicMaterialInstance(Params);
+    }
+    else if (CommandType == TEXT("set_material_scalar_parameter"))
+    {
+        return HandleSetMaterialScalarParameter(Params);
+    }
+    else if (CommandType == TEXT("set_material_vector_parameter"))
+    {
+        return HandleSetMaterialVectorParameter(Params);
+    }
+    else if (CommandType == TEXT("create_material"))
+    {
+        return HandleCreateMaterial(Params);
+    }
+    else if (CommandType == TEXT("duplicate_actor"))
+    {
+        return HandleDuplicateActor(Params);
+    }
+    else if (CommandType == TEXT("get_actor_bounds"))
+    {
+        return HandleGetActorBounds(Params);
+    }
+    else if (CommandType == TEXT("attach_actor_to_actor"))
+    {
+        return HandleAttachActorToActor(Params);
+    }
     // Blueprint actor spawning
     else if (CommandType == TEXT("spawn_blueprint_actor"))
     {
         return HandleSpawnBlueprintActor(Params);
+    }
+    // Foliage commands
+    else if (CommandType == TEXT("spawn_foliage_instances"))
+    {
+        return HandleSpawnFoliageInstances(Params);
     }
     // Editor viewport commands
     else if (CommandType == TEXT("focus_viewport"))
@@ -112,7 +170,7 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleFindActorsByName(const T
     TArray<TSharedPtr<FJsonValue>> MatchingActors;
     for (AActor* Actor : AllActors)
     {
-        if (Actor && Actor->GetName().Contains(Pattern))
+        if (Actor && (Actor->GetName().Contains(Pattern) || Actor->GetActorLabel().Contains(Pattern)))
         {
             MatchingActors.Add(FUnrealMCPCommonUtils::ActorToJson(Actor));
         }
@@ -201,11 +259,32 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
     {
         NewActor = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Location, Rotation, SpawnParams);
     }
+    else if (ActorType == TEXT("PostProcessVolume"))
+    {
+        NewActor = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), Location, Rotation, SpawnParams);
+    }
     else
     {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown actor type: %s"), *ActorType));
-    }
+        // Fallback generico: buscar cualquier UClass nativa de Unreal por nombre exacto
+        UClass* FoundClass = nullptr;
+        for (TObjectIterator<UClass> It; It; ++It)
+        {
+            if (It->IsChildOf(AActor::StaticClass()) && It->GetName() == ActorType)
+            {
+                FoundClass = *It;
+                break;
+            }
+        }
 
+        if (FoundClass)
+        {
+            NewActor = World->SpawnActor<AActor>(FoundClass, Location, Rotation, SpawnParams);
+        }
+        else
+        {
+            return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown actor type: %s"), *ActorType));
+        }
+    }
     if (NewActor)
     {
         // Set scale (since SpawnActor only takes location and rotation)
@@ -511,14 +590,15 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleFocusViewport(const TSha
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get active viewport"));
     }
 
-    // If we have a target actor, focus on it
+    // Determine the focus target location (either the actor's location or the explicit location)
+    FVector FocusTarget;
     if (HasTargetActor)
     {
         // Find the actor
         AActor* TargetActor = nullptr;
         TArray<AActor*> AllActors;
         UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
-        
+
         for (AActor* Actor : AllActors)
         {
             if (Actor && Actor->GetName() == TargetActorName)
@@ -527,34 +607,49 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleFocusViewport(const TSha
                 break;
             }
         }
-
         if (!TargetActor)
         {
             return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *TargetActorName));
         }
-
-        // Focus on the actor
-        ViewportClient->SetViewLocation(TargetActor->GetActorLocation() - FVector(Distance, 0.0f, 0.0f));
+        FocusTarget = TargetActor->GetActorLocation();
     }
-    // Otherwise use the provided location
     else if (HasLocation)
     {
-        ViewportClient->SetViewLocation(Location - FVector(Distance, 0.0f, 0.0f));
+        FocusTarget = Location;
     }
     else
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Either 'target' or 'location' must be provided"));
     }
 
-    // Set orientation if provided
+    // Preserve the current viewing direction (camera->target), scaled to the requested Distance,
+    // instead of always offsetting by a fixed (-Distance, 0, 0) which ignores the target's actual position.
+    FVector CurrentCamPos = ViewportClient->GetViewLocation();
+    FVector DirCamFromTarget = CurrentCamPos - FocusTarget;
+    if (DirCamFromTarget.IsNearlyZero())
+    {
+        // Camera is already at (or extremely close to) the target; fall back to a default offset direction.
+        DirCamFromTarget = FVector(-1.0f, 0.0f, 0.0f);
+    }
+    DirCamFromTarget.Normalize();
+    FVector NewCamPos = FocusTarget + DirCamFromTarget * Distance;
+    ViewportClient->SetViewLocation(NewCamPos);
+
+    // Set orientation: explicit value if provided, otherwise auto-compute a look-at rotation
+    // toward the focus target so the camera actually faces what it's focusing on.
     if (HasOrientation)
     {
         ViewportClient->SetViewRotation(Orientation);
     }
+    else
+    {
+        FVector LookDir = (FocusTarget - NewCamPos).GetSafeNormal();
+        FRotator LookAtRotation = LookDir.Rotation();
+        ViewportClient->SetViewRotation(LookAtRotation);
+    }
 
     // Force viewport to redraw
     ViewportClient->Invalidate();
-
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetBoolField(TEXT("success"), true);
     return ResultObj;
@@ -598,3 +693,666 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleTakeScreenshot(const TSh
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to take screenshot"));
 } 
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnFoliageInstances(const TSharedPtr<FJsonObject>& Params)
+{
+    FString MeshPath;
+    if (!Params->TryGetStringField(TEXT("mesh_path"), MeshPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'mesh_path' parameter"));
+    }
+    FString LandscapeName;
+    if (!Params->TryGetStringField(TEXT("landscape_name"), LandscapeName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'landscape_name' parameter"));
+    }
+    int32 Count = 100;
+    Params->TryGetNumberField(TEXT("count"), Count);
+    double RegionCenterX = 0.0, RegionCenterY = 0.0;
+    const TArray<TSharedPtr<FJsonValue>>* CenterArray;
+    if (Params->TryGetArrayField(TEXT("region_center"), CenterArray) && CenterArray->Num() >= 2)
+    {
+        RegionCenterX = (*CenterArray)[0]->AsNumber();
+        RegionCenterY = (*CenterArray)[1]->AsNumber();
+    }
+    double RegionRadius = 5000.0;
+    Params->TryGetNumberField(TEXT("region_radius"), RegionRadius);
+    double MinScale = 0.8, MaxScale = 1.5;
+    Params->TryGetNumberField(TEXT("min_scale"), MinScale);
+    Params->TryGetNumberField(TEXT("max_scale"), MaxScale);
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == LandscapeName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Landscape not found: %s"), *LandscapeName));
+    }
+    ALandscapeProxy* Landscape = Cast<ALandscapeProxy>(TargetActor);
+    if (!Landscape)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' is not a Landscape"), *LandscapeName));
+    }
+
+    UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+    if (!Mesh)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Static mesh not found: %s"), *MeshPath));
+    }
+    UWorld* World = GWorld;
+
+    UFoliageType_InstancedStaticMesh* FoliageType = NewObject<UFoliageType_InstancedStaticMesh>(GetTransientPackage());
+    FoliageType->SetStaticMesh(Mesh);
+    AInstancedFoliageActor* IFA = AInstancedFoliageActor::GetInstancedFoliageActorForLevel(World->GetCurrentLevel(), /*bCreateIfNone=*/true);
+    if (!IFA)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get or create InstancedFoliageActor for level"));
+    }
+    FFoliageInfo* FoliageInfo = IFA->FindOrAddMesh(FoliageType);
+    if (!FoliageInfo)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to add foliage type"));
+    }
+    int32 SpawnedCount = 0;
+    for (int32 i = 0; i < Count; i++)
+    {
+        FVector2D RandomOffset = FMath::RandPointInCircle(RegionRadius);
+        double SampleX = RegionCenterX + RandomOffset.X;
+        double SampleY = RegionCenterY + RandomOffset.Y;
+        FVector TraceStart(SampleX, SampleY, 100000.0);
+        FVector TraceEnd(SampleX, SampleY, -100000.0);
+        FHitResult Hit;
+        FCollisionQueryParams QueryParams;
+        QueryParams.bTraceComplex = true;
+        if (World->LineTraceSingleByObjectType(Hit, TraceStart, TraceEnd,
+            FCollisionObjectQueryParams(ECC_WorldStatic), QueryParams))
+        {
+            FFoliageInstance Instance;
+            Instance.Location = Hit.Location;
+            Instance.Rotation = FRotator(0, FMath::RandRange(0.f, 360.f), 0).Quaternion().Rotator();
+            float RandomScale = FMath::RandRange((float)MinScale, (float)MaxScale);
+            Instance.DrawScale3D = FVector3f(RandomScale);
+            FoliageInfo->AddInstance(FoliageType, Instance);
+            SpawnedCount++;
+        }
+    }
+    FoliageInfo->Refresh(true, false);
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("landscape"), LandscapeName);
+    ResultObj->SetStringField(TEXT("mesh"), MeshPath);
+    ResultObj->SetNumberField(TEXT("requested_count"), Count);
+    ResultObj->SetNumberField(TEXT("spawned_count"), SpawnedCount);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetActorMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    FString MaterialPath;
+    if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'material_path' parameter"));
+    }
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    UStaticMeshComponent* MeshComp = TargetActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!MeshComp)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' has no StaticMeshComponent"), *ActorName));
+    }
+
+    UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+    if (!Material)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Material not found: %s"), *MaterialPath));
+    }
+
+    MeshComp->SetMaterial(SlotIndex, Material);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ActorName);
+    ResultObj->SetStringField(TEXT("material"), MaterialPath);
+    ResultObj->SetNumberField(TEXT("slot_index"), SlotIndex);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// =====================================================================
+// Alta prioridad — Materiales
+// =====================================================================
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetActorMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    UStaticMeshComponent* MeshComp = TargetActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!MeshComp)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' has no StaticMeshComponent"), *ActorName));
+    }
+
+    UMaterialInterface* Material = MeshComp->GetMaterial(SlotIndex);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ActorName);
+    ResultObj->SetNumberField(TEXT("slot_index"), SlotIndex);
+    ResultObj->SetStringField(TEXT("material_path"), Material ? Material->GetPathName() : TEXT(""));
+    ResultObj->SetBoolField(TEXT("is_dynamic_instance"), Material ? Material->IsA<UMaterialInstanceDynamic>() : false);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateDynamicMaterialInstance(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    UStaticMeshComponent* MeshComp = TargetActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!MeshComp)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' has no StaticMeshComponent"), *ActorName));
+    }
+
+    UMaterialInstanceDynamic* DynMaterial = MeshComp->CreateAndSetMaterialInstanceDynamic(SlotIndex);
+    if (!DynMaterial)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create dynamic material instance (check the slot has a valid parent material)"));
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ActorName);
+    ResultObj->SetNumberField(TEXT("slot_index"), SlotIndex);
+    ResultObj->SetStringField(TEXT("dynamic_instance_name"), DynMaterial->GetName());
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetMaterialScalarParameter(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    FString ParamName;
+    if (!Params->TryGetStringField(TEXT("parameter_name"), ParamName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_name' parameter"));
+    }
+    double Value = 0.0;
+    if (!Params->TryGetNumberField(TEXT("value"), Value))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'value' parameter"));
+    }
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    UStaticMeshComponent* MeshComp = TargetActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!MeshComp)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' has no StaticMeshComponent"), *ActorName));
+    }
+
+    // Si el slot todavía no es una instancia dinámica, la promovemos automáticamente
+    // asi el tool funciona directo sobre un actor recien spawneado sin pasos previos.
+    UMaterialInstanceDynamic* DynMaterial = Cast<UMaterialInstanceDynamic>(MeshComp->GetMaterial(SlotIndex));
+    if (!DynMaterial)
+    {
+        DynMaterial = MeshComp->CreateAndSetMaterialInstanceDynamic(SlotIndex);
+    }
+    if (!DynMaterial)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get or create a dynamic material instance for this slot"));
+    }
+
+    DynMaterial->SetScalarParameterValue(FName(*ParamName), static_cast<float>(Value));
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ActorName);
+    ResultObj->SetStringField(TEXT("parameter"), ParamName);
+    ResultObj->SetNumberField(TEXT("value"), Value);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetMaterialVectorParameter(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    FString ParamName;
+    if (!Params->TryGetStringField(TEXT("parameter_name"), ParamName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_name' parameter"));
+    }
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    const TSharedPtr<FJsonObject>* ValueObj;
+    if (!Params->TryGetObjectField(TEXT("value"), ValueObj))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("'value' must be an object like {\"r\":1.0,\"g\":0.0,\"b\":0.0,\"a\":1.0}"));
+    }
+    double R = 0.0, G = 0.0, B = 0.0, A = 1.0;
+    (*ValueObj)->TryGetNumberField(TEXT("r"), R);
+    (*ValueObj)->TryGetNumberField(TEXT("g"), G);
+    (*ValueObj)->TryGetNumberField(TEXT("b"), B);
+    (*ValueObj)->TryGetNumberField(TEXT("a"), A);
+    FLinearColor ColorValue(R, G, B, A);
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    UStaticMeshComponent* MeshComp = TargetActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!MeshComp)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' has no StaticMeshComponent"), *ActorName));
+    }
+
+    UMaterialInstanceDynamic* DynMaterial = Cast<UMaterialInstanceDynamic>(MeshComp->GetMaterial(SlotIndex));
+    if (!DynMaterial)
+    {
+        DynMaterial = MeshComp->CreateAndSetMaterialInstanceDynamic(SlotIndex);
+    }
+    if (!DynMaterial)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get or create a dynamic material instance for this slot"));
+    }
+
+    DynMaterial->SetVectorParameterValue(FName(*ParamName), ColorValue);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ActorName);
+    ResultObj->SetStringField(TEXT("parameter"), ParamName);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// =====================================================================
+// Alta prioridad — Actores
+// =====================================================================
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleDuplicateActor(const TSharedPtr<FJsonObject>& Params)
+{
+    FString SourceActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), SourceActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    FString NewActorName;
+    Params->TryGetStringField(TEXT("new_name"), NewActorName);
+
+    AActor* SourceActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == SourceActorName)
+        {
+            SourceActor = Actor;
+            break;
+        }
+    }
+    if (!SourceActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *SourceActorName));
+    }
+
+    FVector Offset = FVector::ZeroVector;
+    if (Params->HasField(TEXT("location_offset")))
+    {
+        Offset = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("location_offset"));
+    }
+
+    FTransform NewTransform = SourceActor->GetActorTransform();
+    NewTransform.SetLocation(NewTransform.GetLocation() + Offset);
+
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    AActor* NewActor = GWorld->SpawnActor<AActor>(SourceActor->GetClass(), NewTransform, SpawnParams);
+    if (!NewActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to spawn duplicated actor"));
+    }
+
+    // Copia mesh, materiales y demas propiedades del actor original (mismo mecanismo
+    // que usa el editor internamente al duplicar objetos no relacionados por herencia directa)
+    UEngine::CopyPropertiesForUnrelatedObjects(SourceActor, NewActor);
+    NewActor->SetActorTransform(NewTransform);
+
+    FString FinalLabel = NewActorName.IsEmpty() ? (SourceActorName + TEXT("_Copy")) : NewActorName;
+    NewActor->SetActorLabel(FinalLabel);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("source_actor"), SourceActorName);
+    ResultObj->SetStringField(TEXT("new_actor"), NewActor->GetActorLabel());
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetActorBounds(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && Actor->GetName() == ActorName)
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    FVector Origin, BoxExtent;
+    TargetActor->GetActorBounds(true, Origin, BoxExtent);
+
+    TSharedPtr<FJsonObject> OriginObj = MakeShared<FJsonObject>();
+    OriginObj->SetNumberField(TEXT("x"), Origin.X);
+    OriginObj->SetNumberField(TEXT("y"), Origin.Y);
+    OriginObj->SetNumberField(TEXT("z"), Origin.Z);
+
+    TSharedPtr<FJsonObject> ExtentObj = MakeShared<FJsonObject>();
+    ExtentObj->SetNumberField(TEXT("x"), BoxExtent.X);
+    ExtentObj->SetNumberField(TEXT("y"), BoxExtent.Y);
+    ExtentObj->SetNumberField(TEXT("z"), BoxExtent.Z);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ActorName);
+    ResultObj->SetObjectField(TEXT("origin"), OriginObj);
+    ResultObj->SetObjectField(TEXT("box_extent"), ExtentObj);
+    ResultObj->SetNumberField(TEXT("min_z"), Origin.Z - BoxExtent.Z);
+    ResultObj->SetNumberField(TEXT("max_z"), Origin.Z + BoxExtent.Z);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleAttachActorToActor(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ChildName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ChildName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter (the actor to attach)"));
+    }
+    FString ParentName;
+    if (!Params->TryGetStringField(TEXT("parent_actor_name"), ParentName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'parent_actor_name' parameter"));
+    }
+    FString SocketName;
+    Params->TryGetStringField(TEXT("socket_name"), SocketName);
+
+    // KeepRelative | KeepWorld | SnapToTarget — default KeepRelative
+    FString RuleString = TEXT("KeepRelative");
+    Params->TryGetStringField(TEXT("attachment_rule"), RuleString);
+
+    EAttachmentRule Rule = EAttachmentRule::KeepRelative;
+    if (RuleString == TEXT("KeepWorld"))
+    {
+        Rule = EAttachmentRule::KeepWorld;
+    }
+    else if (RuleString == TEXT("SnapToTarget"))
+    {
+        Rule = EAttachmentRule::SnapToTarget;
+    }
+
+    AActor* ChildActor = nullptr;
+    AActor* ParentActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (!Actor) continue;
+        if (Actor->GetName() == ChildName) { ChildActor = Actor; }
+        if (Actor->GetName() == ParentName) { ParentActor = Actor; }
+    }
+    if (!ChildActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ChildName));
+    }
+    if (!ParentActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent actor not found: %s"), *ParentName));
+    }
+
+    FAttachmentTransformRules TransformRules(Rule, Rule, Rule, false);
+    bool bSuccess = ChildActor->AttachToActor(ParentActor, TransformRules, FName(*SocketName));
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor"), ChildName);
+    ResultObj->SetStringField(TEXT("parent"), ParentName);
+    ResultObj->SetStringField(TEXT("attachment_rule"), RuleString);
+    ResultObj->SetBoolField(TEXT("success"), bSuccess);
+    return ResultObj;
+}
+
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString MaterialName;
+    if (!Params->TryGetStringField(TEXT("name"), MaterialName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+    }
+
+    FString FolderPath = TEXT("/Game/Materials");
+    Params->TryGetStringField(TEXT("path"), FolderPath);
+
+    // Color base (default gris neutro)
+    FLinearColor BaseColorValue(0.5f, 0.5f, 0.5f, 1.0f);
+    const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+    if (Params->TryGetArrayField(TEXT("base_color"), ColorArray) && ColorArray->Num() >= 3)
+    {
+        BaseColorValue.R = (*ColorArray)[0]->AsNumber();
+        BaseColorValue.G = (*ColorArray)[1]->AsNumber();
+        BaseColorValue.B = (*ColorArray)[2]->AsNumber();
+    }
+
+    double RoughnessValue = 0.5;
+    Params->TryGetNumberField(TEXT("roughness"), RoughnessValue);
+
+    double MetallicValue = 0.0;
+    Params->TryGetNumberField(TEXT("metallic"), MetallicValue);
+
+    FString PackageName = FolderPath / MaterialName;
+    PackageName = UPackageTools::SanitizePackageName(PackageName);
+
+    UPackage* Package = CreatePackage(*PackageName);
+    if (!Package)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for material"));
+    }
+
+    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+    UMaterial* NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+        UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+
+    if (!NewMaterial)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create material asset"));
+    }
+
+    // Parametro de color base (queda editable, no hardcodeado)
+    UMaterialExpressionVectorParameter* ColorParam = NewObject<UMaterialExpressionVectorParameter>(NewMaterial);
+    ColorParam->ParameterName = FName(TEXT("BaseColor"));
+    ColorParam->DefaultValue = BaseColorValue;
+    NewMaterial->GetExpressionCollection().AddExpression(ColorParam);
+    NewMaterial->GetEditorOnlyData()->BaseColor.Expression = ColorParam;
+
+    // Parametro de roughness
+    UMaterialExpressionScalarParameter* RoughnessParam = NewObject<UMaterialExpressionScalarParameter>(NewMaterial);
+    RoughnessParam->ParameterName = FName(TEXT("Roughness"));
+    RoughnessParam->DefaultValue = RoughnessValue;
+    NewMaterial->GetExpressionCollection().AddExpression(RoughnessParam);
+    NewMaterial->GetEditorOnlyData()->Roughness.Expression = RoughnessParam;
+
+    // Parametro de metallic
+    UMaterialExpressionScalarParameter* MetallicParam = NewObject<UMaterialExpressionScalarParameter>(NewMaterial);
+    MetallicParam->ParameterName = FName(TEXT("Metallic"));
+    MetallicParam->DefaultValue = MetallicValue;
+    NewMaterial->GetExpressionCollection().AddExpression(MetallicParam);
+    NewMaterial->GetEditorOnlyData()->Metallic.Expression = MetallicParam;
+
+    NewMaterial->PreEditChange(nullptr);
+    NewMaterial->PostEditChange();
+    NewMaterial->MarkPackageDirty();
+    FAssetRegistryModule::AssetCreated(NewMaterial);
+
+    // Guardar el .uasset a disco para que sobreviva un reinicio del editor
+    FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    bool bSaved = UPackage::SavePackage(Package, NewMaterial, *PackageFileName, SaveArgs);
+
+    // Asignacion opcional directa a un actor
+    FString AssignToActor;
+    bool bAssigned = false;
+    if (Params->TryGetStringField(TEXT("assign_to_actor"), AssignToActor) && !AssignToActor.IsEmpty())
+    {
+        for (TActorIterator<AActor> It(GWorld); It; ++It)
+        {
+            if (It->GetName() == AssignToActor)
+            {
+                int32 SlotIndex = 0;
+                double SlotIndexNum;
+                if (Params->TryGetNumberField(TEXT("slot_index"), SlotIndexNum))
+                {
+                    SlotIndex = (int32)SlotIndexNum;
+                }
+                TArray<UActorComponent*> Components;
+                It->GetComponents(UStaticMeshComponent::StaticClass(), Components);
+                for (UActorComponent* Comp : Components)
+                {
+                    if (UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(Comp))
+                    {
+                        MeshComp->SetMaterial(SlotIndex, NewMaterial);
+                        bAssigned = true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("material_path"), NewMaterial->GetPathName());
+    ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
+    ResultObj->SetBoolField(TEXT("assigned_to_actor"), bAssigned);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}

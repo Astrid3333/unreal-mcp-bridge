@@ -484,7 +484,48 @@ TSharedPtr<FJsonObject> FUnrealMCPCommonUtils::ActorToJsonObject(AActor* Actor, 
     ScaleArray.Add(MakeShared<FJsonValueNumber>(Scale.Y));
     ScaleArray.Add(MakeShared<FJsonValueNumber>(Scale.Z));
     ActorObject->SetArrayField(TEXT("scale"), ScaleArray);
-    
+
+    if (bDetailed)
+    {
+        TArray<UActorComponent*> Components;
+        Actor->GetComponents(Components);
+        TArray<TSharedPtr<FJsonValue>> ComponentsArray;
+
+        static const TArray<FString> CommonProps = {
+            TEXT("Intensity"), TEXT("LightColor"), TEXT("AttenuationRadius"),
+            TEXT("Mobility"), TEXT("Visible"), TEXT("RelativeLocation"),
+            TEXT("RelativeRotation"), TEXT("RelativeScale3D")
+        };
+
+        for (UActorComponent* Comp : Components)
+        {
+            if (!Comp)
+            {
+                continue;
+            }
+
+            TSharedPtr<FJsonObject> CompObj = MakeShared<FJsonObject>();
+            CompObj->SetStringField(TEXT("name"), Comp->GetName());
+            CompObj->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
+
+            TSharedPtr<FJsonObject> PropsObj = MakeShared<FJsonObject>();
+            for (const FString& PropName : CommonProps)
+            {
+                TSharedPtr<FJsonValue> PropValue;
+                FString ErrMsg;
+                if (FUnrealMCPCommonUtils::GetObjectProperty(Comp, PropName, PropValue, ErrMsg) && PropValue.IsValid())
+                {
+                    PropsObj->SetField(PropName, PropValue);
+                }
+            }
+            CompObj->SetObjectField(TEXT("properties"), PropsObj);
+
+            ComponentsArray.Add(MakeShared<FJsonValueObject>(CompObj));
+        }
+
+        ActorObject->SetArrayField(TEXT("components"), ComponentsArray);
+    }
+
     return ActorObject;
 }
 
@@ -509,7 +550,7 @@ UK2Node_Event* FUnrealMCPCommonUtils::FindExistingEventNode(UEdGraph* Graph, con
     return nullptr;
 }
 
-bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& PropertyName, 
+static bool SetObjectPropertyImpl(UObject* Object, const FString& PropertyName, 
                                      const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage)
 {
     if (!Object)
@@ -518,11 +559,133 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
         return false;
     }
 
+    // Dot-path syntax: "Component.Property" or "Component.SubComponent.Property"
+    // lets callers reach properties on actor components, e.g. "LightComponent.Intensity".
+    FString FirstSegment;
+    FString Remainder;
+    if (PropertyName.Split(TEXT("."), &FirstSegment, &Remainder))
+    {
+        UObject* SubObject = nullptr;
+
+        // 1) Direct UPROPERTY on the object pointing to a UObject (e.g. LightComponent)
+        FProperty* ObjProp = Object->GetClass()->FindPropertyByName(*FirstSegment);
+        if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(ObjProp))
+        {
+            SubObject = ObjectProperty->GetObjectPropertyValue(
+                ObjectProperty->ContainerPtrToValuePtr<void>(Object));
+        }
+
+        // 1b) Or a nested struct on this object (e.g. RelativeLocation.X) - navigate directly, no UObject needed
+        if (!SubObject)
+        {
+            if (FStructProperty* StructProp = CastField<FStructProperty>(ObjProp))
+            {
+                void* StructAddr = StructProp->ContainerPtrToValuePtr<void>(Object);
+                return FUnrealMCPCommonUtils::SetStructPropertyByPath(StructProp->Struct, StructAddr, Remainder, Value, OutErrorMessage);
+            }
+        }
+
+        // 2) Fall back to searching actor components by name
+        if (!SubObject)
+        {
+            if (AActor* Actor = Cast<AActor>(Object))
+            {
+                TArray<UActorComponent*> Components;
+                Actor->GetComponents(Components);
+                for (UActorComponent* Comp : Components)
+                {
+                    if (Comp && Comp->GetFName() == FName(*FirstSegment))
+                    {
+                        SubObject = Comp;
+                        break;
+                    }
+                }
+
+                // 3) Convenience aliases for common cases
+                if (!SubObject && (FirstSegment == TEXT("Light") || FirstSegment == TEXT("LightComponent")))
+                {
+                    for (UActorComponent* Comp : Components)
+                    {
+                        if (Comp && Comp->IsA(ULightComponent::StaticClass()))
+                        {
+                            SubObject = Comp;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!SubObject)
+        {
+            OutErrorMessage = FString::Printf(TEXT("Component not found: %s"), *FirstSegment);
+            return false;
+        }
+
+        return FUnrealMCPCommonUtils::SetObjectProperty(SubObject, Remainder, Value, OutErrorMessage);
+    }
+
     FProperty* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
     if (!Property)
     {
+        // Fallback: bare property name (no dot) didn't match directly on the object -
+        // search its actor components for a single match before giving up.
+        if (AActor* Actor = Cast<AActor>(Object))
+        {
+            TArray<UActorComponent*> Components;
+            Actor->GetComponents(Components);
+
+            UActorComponent* MatchedComp = nullptr;
+            int32 MatchCount = 0;
+            for (UActorComponent* Comp : Components)
+            {
+                if (Comp && Comp->GetClass()->FindPropertyByName(*PropertyName))
+                {
+                    MatchedComp = Comp;
+                    MatchCount++;
+                }
+            }
+
+            if (MatchCount == 1)
+            {
+                return FUnrealMCPCommonUtils::SetObjectProperty(MatchedComp, PropertyName, Value, OutErrorMessage);
+            }
+            else if (MatchCount > 1)
+            {
+                OutErrorMessage = FString::Printf(
+                    TEXT("Property '%s' is ambiguous - found on %d components. Qualify it, e.g. \"ComponentName.%s\""),
+                    *PropertyName, MatchCount, *PropertyName);
+                return false;
+            }
+        }
+
         OutErrorMessage = FString::Printf(TEXT("Property not found: %s"), *PropertyName);
         return false;
+    }
+
+    // Special-case scene component transform properties: writing RelativeLocation/
+    // RelativeRotation/RelativeScale3D directly via reflection changes the raw struct
+    // but never calls UpdateComponentToWorld(), so the cached world transform (what
+    // GetActorRotation()/GetActorLocation() actually read) stays stale. Route these
+    // through the real setters instead.
+    if (USceneComponent* SceneComp = Cast<USceneComponent>(Object))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Arr;
+        if (PropertyName == TEXT("RelativeLocation") && Value->TryGetArray(Arr) && Arr->Num() >= 3)
+        {
+            SceneComp->SetRelativeLocation(FVector((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber()));
+            return true;
+        }
+        else if (PropertyName == TEXT("RelativeRotation") && Value->TryGetArray(Arr) && Arr->Num() >= 3)
+        {
+            SceneComp->SetRelativeRotation(FRotator((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber()));
+            return true;
+        }
+        else if (PropertyName == TEXT("RelativeScale3D") && Value->TryGetArray(Arr) && Arr->Num() >= 3)
+        {
+            SceneComp->SetRelativeScale3D(FVector((*Arr)[0]->AsNumber(), (*Arr)[1]->AsNumber(), (*Arr)[2]->AsNumber()));
+            return true;
+        }
     }
 
     void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(Object);
@@ -553,41 +716,100 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
         ((FStrProperty*)Property)->SetPropertyValue(PropertyAddr, Value->AsString());
         return true;
     }
+    else if (Property->IsA<FTextProperty>())
+    {
+        ((FTextProperty*)Property)->SetPropertyValue(PropertyAddr, FText::FromString(Value->AsString()));
+        return true;
+    }
+    else if (Property->IsA<FStructProperty>())
+    {
+        FStructProperty* StructProp = CastField<FStructProperty>(Property);
+        UScriptStruct* Struct = StructProp->Struct;
+        const TArray<TSharedPtr<FJsonValue>>* Arr;
+
+        if (Struct == TBaseStructure<FVector>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FVector* VecPtr = (FVector*)PropertyAddr;
+                VecPtr->X = (*Arr)[0]->AsNumber();
+                VecPtr->Y = (*Arr)[1]->AsNumber();
+                VecPtr->Z = (*Arr)[2]->AsNumber();
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3 numbers for FVector property");
+            return false;
+        }
+        else if (Struct == TBaseStructure<FRotator>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FRotator* RotPtr = (FRotator*)PropertyAddr;
+                RotPtr->Pitch = (*Arr)[0]->AsNumber();
+                RotPtr->Yaw = (*Arr)[1]->AsNumber();
+                RotPtr->Roll = (*Arr)[2]->AsNumber();
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3 numbers for FRotator property");
+            return false;
+        }
+        else if (Struct == TBaseStructure<FLinearColor>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FLinearColor* ColPtr = (FLinearColor*)PropertyAddr;
+                ColPtr->R = (*Arr)[0]->AsNumber();
+                ColPtr->G = (*Arr)[1]->AsNumber();
+                ColPtr->B = (*Arr)[2]->AsNumber();
+                ColPtr->A = Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0f;
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3-4 numbers for FLinearColor property");
+            return false;
+        }
+        else if (Struct == TBaseStructure<FColor>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FColor* ColPtr = (FColor*)PropertyAddr;
+                ColPtr->R = (uint8)(*Arr)[0]->AsNumber();
+                ColPtr->G = (uint8)(*Arr)[1]->AsNumber();
+                ColPtr->B = (uint8)(*Arr)[2]->AsNumber();
+                ColPtr->A = Arr->Num() >= 4 ? (uint8)(*Arr)[3]->AsNumber() : 255;
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3-4 numbers for FColor property");
+            return false;
+        }
+
+        OutErrorMessage = FString::Printf(TEXT("Unsupported struct type: %s for property %s"),
+                                        *Struct->GetName(), *PropertyName);
+        return false;
+    }
     else if (Property->IsA<FByteProperty>())
     {
         FByteProperty* ByteProp = CastField<FByteProperty>(Property);
         UEnum* EnumDef = ByteProp ? ByteProp->GetIntPropertyEnum() : nullptr;
         
-        // If this is a TEnumAsByte property (has associated enum)
         if (EnumDef)
         {
-            // Handle numeric value
             if (Value->Type == EJson::Number)
             {
                 uint8 ByteValue = static_cast<uint8>(Value->AsNumber());
                 ByteProp->SetPropertyValue(PropertyAddr, ByteValue);
-                
-                UE_LOG(LogTemp, Display, TEXT("Setting enum property %s to numeric value: %d"), 
-                      *PropertyName, ByteValue);
                 return true;
             }
-            // Handle string enum value
             else if (Value->Type == EJson::String)
             {
                 FString EnumValueName = Value->AsString();
                 
-                // Try to convert numeric string to number first
                 if (EnumValueName.IsNumeric())
                 {
                     uint8 ByteValue = FCString::Atoi(*EnumValueName);
                     ByteProp->SetPropertyValue(PropertyAddr, ByteValue);
-                    
-                    UE_LOG(LogTemp, Display, TEXT("Setting enum property %s to numeric string value: %s -> %d"), 
-                          *PropertyName, *EnumValueName, ByteValue);
                     return true;
                 }
                 
-                // Handle qualified enum names (e.g., "Player0" or "EAutoReceiveInput::Player0")
                 if (EnumValueName.Contains(TEXT("::")))
                 {
                     EnumValueName.Split(TEXT("::"), nullptr, &EnumValueName);
@@ -596,28 +818,16 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
                 int64 EnumValue = EnumDef->GetValueByNameString(EnumValueName);
                 if (EnumValue == INDEX_NONE)
                 {
-                    // Try with full name as fallback
                     EnumValue = EnumDef->GetValueByNameString(Value->AsString());
                 }
                 
                 if (EnumValue != INDEX_NONE)
                 {
                     ByteProp->SetPropertyValue(PropertyAddr, static_cast<uint8>(EnumValue));
-                    
-                    UE_LOG(LogTemp, Display, TEXT("Setting enum property %s to name value: %s -> %lld"), 
-                          *PropertyName, *EnumValueName, EnumValue);
                     return true;
                 }
                 else
                 {
-                    // Log all possible enum values for debugging
-                    UE_LOG(LogTemp, Warning, TEXT("Could not find enum value for '%s'. Available options:"), *EnumValueName);
-                    for (int32 i = 0; i < EnumDef->NumEnums(); i++)
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("  - %s (value: %d)"), 
-                               *EnumDef->GetNameStringByIndex(i), EnumDef->GetValueByIndex(i));
-                    }
-                    
                     OutErrorMessage = FString::Printf(TEXT("Could not find enum value for '%s'"), *EnumValueName);
                     return false;
                 }
@@ -625,7 +835,6 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
         }
         else
         {
-            // Regular byte property
             uint8 ByteValue = static_cast<uint8>(Value->AsNumber());
             ByteProp->SetPropertyValue(PropertyAddr, ByteValue);
             return true;
@@ -639,33 +848,23 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
         
         if (EnumDef && UnderlyingNumericProp)
         {
-            // Handle numeric value
             if (Value->Type == EJson::Number)
             {
                 int64 EnumValue = static_cast<int64>(Value->AsNumber());
                 UnderlyingNumericProp->SetIntPropertyValue(PropertyAddr, EnumValue);
-                
-                UE_LOG(LogTemp, Display, TEXT("Setting enum property %s to numeric value: %lld"), 
-                      *PropertyName, EnumValue);
                 return true;
             }
-            // Handle string enum value
             else if (Value->Type == EJson::String)
             {
                 FString EnumValueName = Value->AsString();
                 
-                // Try to convert numeric string to number first
                 if (EnumValueName.IsNumeric())
                 {
                     int64 EnumValue = FCString::Atoi64(*EnumValueName);
                     UnderlyingNumericProp->SetIntPropertyValue(PropertyAddr, EnumValue);
-                    
-                    UE_LOG(LogTemp, Display, TEXT("Setting enum property %s to numeric string value: %s -> %lld"), 
-                          *PropertyName, *EnumValueName, EnumValue);
                     return true;
                 }
                 
-                // Handle qualified enum names
                 if (EnumValueName.Contains(TEXT("::")))
                 {
                     EnumValueName.Split(TEXT("::"), nullptr, &EnumValueName);
@@ -674,28 +873,16 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
                 int64 EnumValue = EnumDef->GetValueByNameString(EnumValueName);
                 if (EnumValue == INDEX_NONE)
                 {
-                    // Try with full name as fallback
                     EnumValue = EnumDef->GetValueByNameString(Value->AsString());
                 }
                 
                 if (EnumValue != INDEX_NONE)
                 {
                     UnderlyingNumericProp->SetIntPropertyValue(PropertyAddr, EnumValue);
-                    
-                    UE_LOG(LogTemp, Display, TEXT("Setting enum property %s to name value: %s -> %lld"), 
-                          *PropertyName, *EnumValueName, EnumValue);
                     return true;
                 }
                 else
                 {
-                    // Log all possible enum values for debugging
-                    UE_LOG(LogTemp, Warning, TEXT("Could not find enum value for '%s'. Available options:"), *EnumValueName);
-                    for (int32 i = 0; i < EnumDef->NumEnums(); i++)
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("  - %s (value: %d)"), 
-                               *EnumDef->GetNameStringByIndex(i), EnumDef->GetValueByIndex(i));
-                    }
-                    
                     OutErrorMessage = FString::Printf(TEXT("Could not find enum value for '%s'"), *EnumValueName);
                     return false;
                 }
@@ -703,7 +890,543 @@ bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& Pr
         }
     }
     
+    else if (Property->IsA<FObjectProperty>())
+    {
+        FObjectProperty* ObjProperty = CastField<FObjectProperty>(Property);
+        FString AssetPath = Value->AsString();
+        UObject* Asset = StaticLoadObject(ObjProperty->PropertyClass, nullptr, *AssetPath);
+        if (!Asset)
+        {
+            OutErrorMessage = FString::Printf(TEXT("Could not load asset at path: %s"), *AssetPath);
+            return false;
+        }
+        ObjProperty->SetObjectPropertyValue(PropertyAddr, Asset);
+        return true;
+    }
+
     OutErrorMessage = FString::Printf(TEXT("Unsupported property type: %s for property %s"), 
                                     *Property->GetClass()->GetName(), *PropertyName);
     return false;
-} 
+}
+
+bool FUnrealMCPCommonUtils::SetObjectProperty(UObject* Object, const FString& PropertyName, 
+                                     const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage)
+{
+    bool bSuccess = SetObjectPropertyImpl(Object, PropertyName, Value, OutErrorMessage);
+
+    if (bSuccess && Object)
+    {
+        Object->Modify();
+        FPropertyChangedEvent PropertyChangedEvent(nullptr, EPropertyChangeType::ValueSet);
+        Object->PostEditChangeProperty(PropertyChangedEvent);
+
+        if (UActorComponent* Comp = Cast<UActorComponent>(Object))
+        {
+            Comp->MarkRenderStateDirty();
+        }
+
+        if (AActor* Actor = Cast<AActor>(Object))
+        {
+            Actor->MarkComponentsRenderStateDirty();
+        }
+    }
+
+    return bSuccess;
+}
+
+bool FUnrealMCPCommonUtils::GetStructPropertyByPath(UScriptStruct* Struct, const void* StructPtr, const FString& PropertyPath,
+                                 TSharedPtr<FJsonValue>& OutValue, FString& OutErrorMessage)
+{
+    if (!Struct || !StructPtr)
+    {
+        OutErrorMessage = TEXT("Invalid struct");
+        return false;
+    }
+
+    FString FirstSegment;
+    FString Remainder;
+    if (PropertyPath.Split(TEXT("."), &FirstSegment, &Remainder))
+    {
+        FProperty* Prop = Struct->FindPropertyByName(*FirstSegment);
+        if (FStructProperty* StructProp = CastField<FStructProperty>(Prop))
+        {
+            const void* InnerAddr = StructProp->ContainerPtrToValuePtr<void>(StructPtr);
+            return GetStructPropertyByPath(StructProp->Struct, InnerAddr, Remainder, OutValue, OutErrorMessage);
+        }
+
+        OutErrorMessage = FString::Printf(TEXT("Field '%s' is not a struct, cannot navigate further"), *FirstSegment);
+        return false;
+    }
+
+    FProperty* Property = Struct->FindPropertyByName(*PropertyPath);
+    if (!Property)
+    {
+        OutErrorMessage = FString::Printf(TEXT("Struct field not found: %s"), *PropertyPath);
+        return false;
+    }
+
+    const void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(StructPtr);
+
+    if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
+    {
+        OutValue = MakeShared<FJsonValueBoolean>(BoolProp->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (FIntProperty* IntProp = CastField<FIntProperty>(Property))
+    {
+        OutValue = MakeShared<FJsonValueNumber>(IntProp->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Property))
+    {
+        OutValue = MakeShared<FJsonValueNumber>(FloatProp->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Property))
+    {
+        OutValue = MakeShared<FJsonValueNumber>(DoubleProp->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (FStrProperty* StrProp = CastField<FStrProperty>(Property))
+    {
+        OutValue = MakeShared<FJsonValueString>(StrProp->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+    {
+        UScriptStruct* InnerStruct = StructProp->Struct;
+        TArray<TSharedPtr<FJsonValue>> Arr;
+
+        if (InnerStruct == TBaseStructure<FVector>::Get())
+        {
+            const FVector* VecPtr = (const FVector*)PropertyAddr;
+            Arr.Add(MakeShared<FJsonValueNumber>(VecPtr->X));
+            Arr.Add(MakeShared<FJsonValueNumber>(VecPtr->Y));
+            Arr.Add(MakeShared<FJsonValueNumber>(VecPtr->Z));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+        else if (InnerStruct == TBaseStructure<FRotator>::Get())
+        {
+            const FRotator* RotPtr = (const FRotator*)PropertyAddr;
+            Arr.Add(MakeShared<FJsonValueNumber>(RotPtr->Pitch));
+            Arr.Add(MakeShared<FJsonValueNumber>(RotPtr->Yaw));
+            Arr.Add(MakeShared<FJsonValueNumber>(RotPtr->Roll));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+        else if (InnerStruct == TBaseStructure<FLinearColor>::Get())
+        {
+            const FLinearColor* ColPtr = (const FLinearColor*)PropertyAddr;
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->R));
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->G));
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->B));
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->A));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+        else if (InnerStruct == TBaseStructure<FColor>::Get())
+        {
+            const FColor* ColPtr = (const FColor*)PropertyAddr;
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->R));
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->G));
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->B));
+            Arr.Add(MakeShared<FJsonValueNumber>(ColPtr->A));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+
+        OutErrorMessage = FString::Printf(TEXT("Unsupported nested struct type: %s for field %s"),
+                                        *InnerStruct->GetName(), *PropertyPath);
+        return false;
+    }
+    else if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+    {
+        OutValue = MakeShared<FJsonValueNumber>(ByteProp->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+
+    OutErrorMessage = FString::Printf(TEXT("Unsupported field type: %s for field %s"),
+                                    *Property->GetClass()->GetName(), *PropertyPath);
+    return false;
+}
+
+bool FUnrealMCPCommonUtils::GetObjectProperty(UObject* Object, const FString& PropertyName,
+                                 TSharedPtr<FJsonValue>& OutValue, FString& OutErrorMessage)
+{
+    if (!Object)
+    {
+        OutErrorMessage = TEXT("Invalid object");
+        return false;
+    }
+
+    FString FirstSegment;
+    FString Remainder;
+    if (PropertyName.Split(TEXT("."), &FirstSegment, &Remainder))
+    {
+        UObject* SubObject = nullptr;
+
+        FProperty* ObjProp = Object->GetClass()->FindPropertyByName(*FirstSegment);
+        if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(ObjProp))
+        {
+            SubObject = ObjectProperty->GetObjectPropertyValue(
+                ObjectProperty->ContainerPtrToValuePtr<void>(Object));
+        }
+
+        if (!SubObject)
+        {
+            if (FStructProperty* StructProp = CastField<FStructProperty>(ObjProp))
+            {
+                const void* StructAddr = StructProp->ContainerPtrToValuePtr<void>(Object);
+                return GetStructPropertyByPath(StructProp->Struct, StructAddr, Remainder, OutValue, OutErrorMessage);
+            }
+        }
+
+        if (!SubObject)
+        {
+            if (AActor* Actor = Cast<AActor>(Object))
+            {
+                TArray<UActorComponent*> Components;
+                Actor->GetComponents(Components);
+                for (UActorComponent* Comp : Components)
+                {
+                    if (Comp && Comp->GetFName() == FName(*FirstSegment))
+                    {
+                        SubObject = Comp;
+                        break;
+                    }
+                }
+
+                if (!SubObject && (FirstSegment == TEXT("Light") || FirstSegment == TEXT("LightComponent")))
+                {
+                    for (UActorComponent* Comp : Components)
+                    {
+                        if (Comp && Comp->IsA(ULightComponent::StaticClass()))
+                        {
+                            SubObject = Comp;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!SubObject)
+        {
+            OutErrorMessage = FString::Printf(TEXT("Component not found: %s"), *FirstSegment);
+            return false;
+        }
+
+        return GetObjectProperty(SubObject, Remainder, OutValue, OutErrorMessage);
+    }
+
+    if (USceneComponent* SceneComp = Cast<USceneComponent>(Object))
+    {
+        TArray<TSharedPtr<FJsonValue>> Arr;
+        if (PropertyName == TEXT("RelativeLocation"))
+        {
+            FVector Loc = SceneComp->GetRelativeLocation();
+            Arr.Add(MakeShared<FJsonValueNumber>(Loc.X));
+            Arr.Add(MakeShared<FJsonValueNumber>(Loc.Y));
+            Arr.Add(MakeShared<FJsonValueNumber>(Loc.Z));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+        else if (PropertyName == TEXT("RelativeRotation"))
+        {
+            FRotator Rot = SceneComp->GetRelativeRotation();
+            Arr.Add(MakeShared<FJsonValueNumber>(Rot.Pitch));
+            Arr.Add(MakeShared<FJsonValueNumber>(Rot.Yaw));
+            Arr.Add(MakeShared<FJsonValueNumber>(Rot.Roll));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+        else if (PropertyName == TEXT("RelativeScale3D"))
+        {
+            FVector Scale = SceneComp->GetRelativeScale3D();
+            Arr.Add(MakeShared<FJsonValueNumber>(Scale.X));
+            Arr.Add(MakeShared<FJsonValueNumber>(Scale.Y));
+            Arr.Add(MakeShared<FJsonValueNumber>(Scale.Z));
+            OutValue = MakeShared<FJsonValueArray>(Arr);
+            return true;
+        }
+    }
+
+    FProperty* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+    if (!Property)
+    {
+        OutErrorMessage = FString::Printf(TEXT("Property not found: %s"), *PropertyName);
+        return false;
+    }
+
+    const void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(Object);
+
+    if (Property->IsA<FBoolProperty>())
+    {
+        OutValue = MakeShared<FJsonValueBoolean>(((FBoolProperty*)Property)->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (Property->IsA<FIntProperty>())
+    {
+        OutValue = MakeShared<FJsonValueNumber>(((FIntProperty*)Property)->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (Property->IsA<FFloatProperty>())
+    {
+        OutValue = MakeShared<FJsonValueNumber>(((FFloatProperty*)Property)->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (Property->IsA<FDoubleProperty>())
+    {
+        OutValue = MakeShared<FJsonValueNumber>(((FDoubleProperty*)Property)->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (Property->IsA<FStrProperty>())
+    {
+        OutValue = MakeShared<FJsonValueString>(((FStrProperty*)Property)->GetPropertyValue(PropertyAddr));
+        return true;
+    }
+    else if (Property->IsA<FTextProperty>())
+    {
+        OutValue = MakeShared<FJsonValueString>(((FTextProperty*)Property)->GetPropertyValue(PropertyAddr).ToString());
+        return true;
+    }
+    else if (Property->IsA<FStructProperty>())
+    {
+        FStructProperty* StructProp = CastField<FStructProperty>(Property);
+        return GetStructPropertyByPath(StructProp->Struct, PropertyAddr, TEXT(""), OutValue, OutErrorMessage);
+    }
+    else if (Property->IsA<FByteProperty>())
+    {
+        FByteProperty* ByteProp = CastField<FByteProperty>(Property);
+        UEnum* EnumDef = ByteProp->GetIntPropertyEnum();
+        uint8 ByteValue = ByteProp->GetPropertyValue(PropertyAddr);
+        if (EnumDef)
+        {
+            OutValue = MakeShared<FJsonValueString>(EnumDef->GetNameStringByValue(ByteValue));
+        }
+        else
+        {
+            OutValue = MakeShared<FJsonValueNumber>(ByteValue);
+        }
+        return true;
+    }
+    else if (Property->IsA<FEnumProperty>())
+    {
+        FEnumProperty* EnumProp = CastField<FEnumProperty>(Property);
+        UEnum* EnumDef = EnumProp->GetEnum();
+        FNumericProperty* UnderlyingNumericProp = EnumProp->GetUnderlyingProperty();
+        int64 EnumValue = UnderlyingNumericProp->GetSignedIntPropertyValue(PropertyAddr);
+        if (EnumDef)
+        {
+            OutValue = MakeShared<FJsonValueString>(EnumDef->GetNameStringByValue(EnumValue));
+        }
+        else
+        {
+            OutValue = MakeShared<FJsonValueNumber>(EnumValue);
+        }
+        return true;
+    }
+    else if (Property->IsA<FObjectProperty>())
+    {
+        FObjectProperty* ObjProperty = CastField<FObjectProperty>(Property);
+        UObject* Asset = ObjProperty->GetObjectPropertyValue(PropertyAddr);
+        if (Asset)
+        {
+            OutValue = MakeShared<FJsonValueString>(Asset->GetPathName());
+        }
+        else
+        {
+            OutValue = MakeShared<FJsonValueNull>();
+        }
+        return true;
+    }
+
+    OutErrorMessage = FString::Printf(TEXT("Unsupported property type: %s for property %s"),
+                                    *Property->GetClass()->GetName(), *PropertyName);
+    return false;
+}
+
+bool FUnrealMCPCommonUtils::SetStructPropertyByPath(UScriptStruct* Struct, void* StructPtr, const FString& PropertyPath,
+                                     const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage)
+{
+    if (!Struct || !StructPtr)
+    {
+        OutErrorMessage = TEXT("Invalid struct");
+        return false;
+    }
+
+    // Dot-path: navigate into nested structs or object references inside this struct
+    FString FirstSegment;
+    FString Remainder;
+    if (PropertyPath.Split(TEXT("."), &FirstSegment, &Remainder))
+    {
+        FProperty* SubProp = Struct->FindPropertyByName(*FirstSegment);
+        if (!SubProp)
+        {
+            OutErrorMessage = FString::Printf(TEXT("Struct field not found: %s"), *FirstSegment);
+            return false;
+        }
+
+        void* SubAddr = SubProp->ContainerPtrToValuePtr<void>(StructPtr);
+
+        if (FStructProperty* SubStructProp = CastField<FStructProperty>(SubProp))
+        {
+            return SetStructPropertyByPath(SubStructProp->Struct, SubAddr, Remainder, Value, OutErrorMessage);
+        }
+        else if (FObjectProperty* SubObjectProp = CastField<FObjectProperty>(SubProp))
+        {
+            UObject* SubObject = SubObjectProp->GetObjectPropertyValue(SubAddr);
+            if (!SubObject)
+            {
+                OutErrorMessage = FString::Printf(TEXT("Object reference is null: %s"), *FirstSegment);
+                return false;
+            }
+            return FUnrealMCPCommonUtils::SetObjectProperty(SubObject, Remainder, Value, OutErrorMessage);
+        }
+
+        OutErrorMessage = FString::Printf(TEXT("Field '%s' is not a struct or object, cannot navigate further"), *FirstSegment);
+        return false;
+    }
+
+    // Final segment: set the value on this struct
+    FProperty* Property = Struct->FindPropertyByName(*PropertyPath);
+    if (!Property)
+    {
+        OutErrorMessage = FString::Printf(TEXT("Struct field not found: %s"), *PropertyPath);
+        return false;
+    }
+
+    void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(StructPtr);
+
+    if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
+    {
+        BoolProp->SetPropertyValue(PropertyAddr, Value->AsBool());
+        return true;
+    }
+    else if (FIntProperty* IntProp = CastField<FIntProperty>(Property))
+    {
+        IntProp->SetPropertyValue(PropertyAddr, static_cast<int32>(Value->AsNumber()));
+        return true;
+    }
+    else if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Property))
+    {
+        FloatProp->SetPropertyValue(PropertyAddr, Value->AsNumber());
+        return true;
+    }
+    else if (FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Property))
+    {
+        DoubleProp->SetPropertyValue(PropertyAddr, Value->AsNumber());
+        return true;
+    }
+    else if (FStrProperty* StrProp = CastField<FStrProperty>(Property))
+    {
+        StrProp->SetPropertyValue(PropertyAddr, Value->AsString());
+        return true;
+    }
+    else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+    {
+        UScriptStruct* InnerStruct = StructProp->Struct;
+        const TArray<TSharedPtr<FJsonValue>>* Arr;
+
+        if (InnerStruct == TBaseStructure<FVector>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FVector* VecPtr = (FVector*)PropertyAddr;
+                VecPtr->X = (*Arr)[0]->AsNumber();
+                VecPtr->Y = (*Arr)[1]->AsNumber();
+                VecPtr->Z = (*Arr)[2]->AsNumber();
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3 numbers for FVector property");
+            return false;
+        }
+        else if (InnerStruct == TBaseStructure<FRotator>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FRotator* RotPtr = (FRotator*)PropertyAddr;
+                RotPtr->Pitch = (*Arr)[0]->AsNumber();
+                RotPtr->Yaw = (*Arr)[1]->AsNumber();
+                RotPtr->Roll = (*Arr)[2]->AsNumber();
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3 numbers for FRotator property");
+            return false;
+        }
+        else if (InnerStruct == TBaseStructure<FLinearColor>::Get())
+        {
+            if (Value->TryGetArray(Arr) && Arr->Num() >= 3)
+            {
+                FLinearColor* ColPtr = (FLinearColor*)PropertyAddr;
+                ColPtr->R = (*Arr)[0]->AsNumber();
+                ColPtr->G = (*Arr)[1]->AsNumber();
+                ColPtr->B = (*Arr)[2]->AsNumber();
+                ColPtr->A = Arr->Num() >= 4 ? (*Arr)[3]->AsNumber() : 1.0f;
+                return true;
+            }
+            OutErrorMessage = TEXT("Expected array of 3-4 numbers for FLinearColor property");
+            return false;
+        }
+
+        OutErrorMessage = FString::Printf(TEXT("Unsupported nested struct type: %s for field %s"),
+                                        *InnerStruct->GetName(), *PropertyPath);
+        return false;
+    }
+    else if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+    {
+        UEnum* EnumDef = ByteProp->GetIntPropertyEnum();
+        if (EnumDef && Value->Type == EJson::String)
+        {
+            FString EnumValueName = Value->AsString();
+            if (EnumValueName.Contains(TEXT("::")))
+            {
+                EnumValueName.Split(TEXT("::"), nullptr, &EnumValueName);
+            }
+            int64 EnumValue = EnumDef->GetValueByNameString(EnumValueName);
+            if (EnumValue == INDEX_NONE)
+            {
+                OutErrorMessage = FString::Printf(TEXT("Could not find enum value for '%s'"), *EnumValueName);
+                return false;
+            }
+            ByteProp->SetPropertyValue(PropertyAddr, static_cast<uint8>(EnumValue));
+            return true;
+        }
+        ByteProp->SetPropertyValue(PropertyAddr, static_cast<uint8>(Value->AsNumber()));
+        return true;
+    }
+    else if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+    {
+        UEnum* EnumDef = EnumProp->GetEnum();
+        FNumericProperty* UnderlyingNumericProp = EnumProp->GetUnderlyingProperty();
+        if (EnumDef && UnderlyingNumericProp)
+        {
+            if (Value->Type == EJson::Number)
+            {
+                UnderlyingNumericProp->SetIntPropertyValue(PropertyAddr, static_cast<int64>(Value->AsNumber()));
+                return true;
+            }
+            else if (Value->Type == EJson::String)
+            {
+                FString EnumValueName = Value->AsString();
+                if (EnumValueName.Contains(TEXT("::")))
+                {
+                    EnumValueName.Split(TEXT("::"), nullptr, &EnumValueName);
+                }
+                int64 EnumValue = EnumDef->GetValueByNameString(EnumValueName);
+                if (EnumValue == INDEX_NONE)
+                {
+                    OutErrorMessage = FString::Printf(TEXT("Could not find enum value for '%s'"), *EnumValueName);
+                    return false;
+                }
+                UnderlyingNumericProp->SetIntPropertyValue(PropertyAddr, EnumValue);
+                return true;
+            }
+        }
+    }
+
+    OutErrorMessage = FString::Printf(TEXT("Unsupported field type: %s for field %s"),
+                                    *Property->GetClass()->GetName(), *PropertyPath);
+    return false;
+}
