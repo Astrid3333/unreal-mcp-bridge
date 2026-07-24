@@ -58,6 +58,7 @@
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Commands/UnrealMCPUMGCommands.h"
 #include "Commands/UnrealMCPAudioCommands.h"
+#include "Commands/UnrealMCPNiagaraCommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -71,6 +72,7 @@ UUnrealMCPBridge::UUnrealMCPBridge()
     ProjectCommands = MakeShared<FUnrealMCPProjectCommands>();
     UMGCommands = MakeShared<FUnrealMCPUMGCommands>();
     AudioCommands = MakeShared<FUnrealMCPAudioCommands>();
+    NiagaraCommands = MakeShared<FUnrealMCPNiagaraCommands>();
 }
 
 UUnrealMCPBridge::~UUnrealMCPBridge()
@@ -81,6 +83,7 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
     ProjectCommands.Reset();
     UMGCommands.Reset();
     AudioCommands.Reset();
+    NiagaraCommands.Reset();
 }
 
 // Initialize subsystem
@@ -299,6 +302,16 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("play_sound_2d"))
             {
                 ResultJson = AudioCommands->HandleCommand(CommandType, Params);
+            }
+            // Niagara Commands
+            else if (CommandType == TEXT("spawn_niagara_system") ||
+                     CommandType == TEXT("set_niagara_float_parameter") ||
+                     CommandType == TEXT("set_niagara_vector_parameter") ||
+                     CommandType == TEXT("set_niagara_color_parameter") ||
+                     CommandType == TEXT("activate_niagara_component") ||
+                     CommandType == TEXT("deactivate_niagara_component"))
+            {
+                ResultJson = NiagaraCommands->HandleCommand(CommandType, Params);
             }
             else
             {

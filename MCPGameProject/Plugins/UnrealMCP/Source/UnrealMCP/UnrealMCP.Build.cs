@@ -53,7 +53,8 @@ public class UnrealMCP : ModuleRules
 				"Projects",
 				"AssetRegistry",
 				"Foliage",
-				"Landscape"
+				"Landscape",
+				"Niagara"
 			}
 		);
 		
