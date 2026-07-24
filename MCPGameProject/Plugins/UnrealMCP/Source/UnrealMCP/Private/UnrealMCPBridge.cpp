@@ -57,6 +57,7 @@
 #include "Commands/UnrealMCPProjectCommands.h"
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Commands/UnrealMCPUMGCommands.h"
+#include "Commands/UnrealMCPAudioCommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -69,6 +70,7 @@ UUnrealMCPBridge::UUnrealMCPBridge()
     BlueprintNodeCommands = MakeShared<FUnrealMCPBlueprintNodeCommands>();
     ProjectCommands = MakeShared<FUnrealMCPProjectCommands>();
     UMGCommands = MakeShared<FUnrealMCPUMGCommands>();
+    AudioCommands = MakeShared<FUnrealMCPAudioCommands>();
 }
 
 UUnrealMCPBridge::~UUnrealMCPBridge()
@@ -78,6 +80,7 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
     BlueprintNodeCommands.Reset();
     ProjectCommands.Reset();
     UMGCommands.Reset();
+    AudioCommands.Reset();
 }
 
 // Initialize subsystem
@@ -286,6 +289,16 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("add_widget_to_viewport"))
             {
                 ResultJson = UMGCommands->HandleCommand(CommandType, Params);
+            }
+            // Audio Commands
+            else if (CommandType == TEXT("create_sound_attenuation") ||
+                     CommandType == TEXT("create_sound_class") ||
+                     CommandType == TEXT("create_sound_cue") ||
+                     CommandType == TEXT("spawn_ambient_sound") ||
+                     CommandType == TEXT("set_ambient_sound_properties") ||
+                     CommandType == TEXT("play_sound_2d"))
+            {
+                ResultJson = AudioCommands->HandleCommand(CommandType, Params);
             }
             else
             {

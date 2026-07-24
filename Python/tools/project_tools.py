@@ -3,24 +3,15 @@ Project Tools for Unreal MCP.
 
 This module provides tools for managing project-wide settings and configuration.
 """
-
 import logging
 from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP, Context
-
-# Get logger
-logger = logging.getLogger("UnrealMCP")
+logger = logging.getLogger('UnrealMCP')
 
 def register_project_tools(mcp: FastMCP):
     """Register project tools with the MCP server."""
-    
-    @mcp.tool()
-    def create_input_mapping(
-        ctx: Context,
-        action_name: str,
-        key: str,
-        input_type: str = "Action"
-    ) -> Dict[str, Any]:
+
+    def _create_input_mapping(ctx: Context, action_name: str, key: str, input_type: str='Action') -> Dict[str, Any]:
         """
         Create an input mapping for the project.
         
@@ -33,32 +24,40 @@ def register_project_tools(mcp: FastMCP):
             Response indicating success or failure
         """
         from unreal_mcp_server import get_unreal_connection
-        
         try:
             unreal = get_unreal_connection()
             if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "action_name": action_name,
-                "key": key,
-                "input_type": input_type
-            }
-            
+                logger.error('Failed to connect to Unreal Engine')
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'action_name': action_name, 'key': key, 'input_type': input_type}
             logger.info(f"Creating input mapping '{action_name}' with key '{key}'")
-            response = unreal.send_command("create_input_mapping", params)
-            
+            response = unreal.send_command('create_input_mapping', params)
             if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Input mapping creation response: {response}")
+                logger.error('No response from Unreal Engine')
+                return {'success': False, 'message': 'No response from Unreal Engine'}
+            logger.info(f'Input mapping creation response: {response}')
             return response
-            
         except Exception as e:
-            error_msg = f"Error creating input mapping: {e}"
+            error_msg = f'Error creating input mapping: {e}'
             logger.error(error_msg)
-            return {"success": False, "message": error_msg}
+            return {'success': False, 'message': error_msg}
+    logger.info('Project tools registered successfully')
+    ACTIONS = {'create_input_mapping': _create_input_mapping}
+
+    @mcp.tool()
+    def unreal_project(ctx: Context, action: str, params: Dict[str, Any]={}) -> Any:
+        """Router para operaciones de dominio 'unreal_project' en Unreal Engine.
     
-    logger.info("Project tools registered successfully") 
+    Parametros:
+      action: nombre de la operacion (ver lista abajo)
+      params: dict con los argumentos de esa operacion
+    
+    Operaciones disponibles:
+      - create_input_mapping(action_name, key, input_type): Create an input mapping for the project.
+    """
+        if action not in ACTIONS:
+            return {'success': False, 'message': f"Accion desconocida '{action}'. Disponibles: {list(ACTIONS.keys())}"}
+        try:
+            return ACTIONS[action](ctx, **params)
+        except TypeError as e:
+            return {'success': False, 'message': f"Parametros invalidos para accion '{action}': {e}"}
