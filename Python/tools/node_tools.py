@@ -248,6 +248,72 @@ def register_blueprint_node_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {'success': False, 'message': error_msg}
 
+    def _add_blueprint_get_variable_node(ctx: Context, blueprint_name: str, variable_name: str, node_position=None) -> Dict[str, Any]:
+        """
+        Add a 'Get' node for an existing Blueprint variable to the event graph.
+
+        Args:
+            blueprint_name: Name of the target Blueprint
+            variable_name: Name of the variable to read (must already exist, e.g. via add_blueprint_variable)
+            node_position: Optional [X, Y] position in the graph
+
+        Returns:
+            Response containing the node ID and success status
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            if node_position is None:
+                node_position = [0, 0]
+            params = {'blueprint_name': blueprint_name, 'variable_name': variable_name, 'node_position': node_position}
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error('Failed to connect to Unreal Engine')
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            logger.info(f"Adding variable get node for '{variable_name}' to blueprint '{blueprint_name}'")
+            response = unreal.send_command('add_blueprint_get_variable_node', params)
+            if not response:
+                logger.error('No response from Unreal Engine')
+                return {'success': False, 'message': 'No response from Unreal Engine'}
+            logger.info(f'Variable get node creation response: {response}')
+            return response
+        except Exception as e:
+            error_msg = f'Error adding variable get node: {e}'
+            logger.error(error_msg)
+            return {'success': False, 'message': error_msg}
+
+    def _add_blueprint_set_variable_node(ctx: Context, blueprint_name: str, variable_name: str, node_position=None) -> Dict[str, Any]:
+        """
+        Add a 'Set' node for an existing Blueprint variable to the event graph.
+
+        Args:
+            blueprint_name: Name of the target Blueprint
+            variable_name: Name of the variable to write (must already exist, e.g. via add_blueprint_variable)
+            node_position: Optional [X, Y] position in the graph
+
+        Returns:
+            Response containing the node ID and success status
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            if node_position is None:
+                node_position = [0, 0]
+            params = {'blueprint_name': blueprint_name, 'variable_name': variable_name, 'node_position': node_position}
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error('Failed to connect to Unreal Engine')
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            logger.info(f"Adding variable set node for '{variable_name}' to blueprint '{blueprint_name}'")
+            response = unreal.send_command('add_blueprint_set_variable_node', params)
+            if not response:
+                logger.error('No response from Unreal Engine')
+                return {'success': False, 'message': 'No response from Unreal Engine'}
+            logger.info(f'Variable set node creation response: {response}')
+            return response
+        except Exception as e:
+            error_msg = f'Error adding variable set node: {e}'
+            logger.error(error_msg)
+            return {'success': False, 'message': error_msg}
+
     def _find_blueprint_nodes(ctx: Context, blueprint_name: str, node_type=None, event_type=None) -> Dict[str, Any]:
         """
         Find nodes in a Blueprint's event graph.
@@ -279,7 +345,7 @@ def register_blueprint_node_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {'success': False, 'message': error_msg}
     logger.info('Blueprint node tools registered successfully')
-    ACTIONS = {'add_blueprint_event_node': _add_blueprint_event_node, 'add_blueprint_input_action_node': _add_blueprint_input_action_node, 'add_blueprint_function_node': _add_blueprint_function_node, 'connect_blueprint_nodes': _connect_blueprint_nodes, 'add_blueprint_variable': _add_blueprint_variable, 'add_blueprint_get_self_component_reference': _add_blueprint_get_self_component_reference, 'add_blueprint_self_reference': _add_blueprint_self_reference, 'find_blueprint_nodes': _find_blueprint_nodes}
+    ACTIONS = {'add_blueprint_event_node': _add_blueprint_event_node, 'add_blueprint_input_action_node': _add_blueprint_input_action_node, 'add_blueprint_function_node': _add_blueprint_function_node, 'connect_blueprint_nodes': _connect_blueprint_nodes, 'add_blueprint_variable': _add_blueprint_variable, 'add_blueprint_get_self_component_reference': _add_blueprint_get_self_component_reference, 'add_blueprint_self_reference': _add_blueprint_self_reference, 'find_blueprint_nodes': _find_blueprint_nodes, 'add_blueprint_get_variable_node': _add_blueprint_get_variable_node, 'add_blueprint_set_variable_node': _add_blueprint_set_variable_node}
 
     @mcp.tool()
     def unreal_blueprint_node(ctx: Context, action: str, params: Dict[str, Any]={}) -> Any:
@@ -298,6 +364,8 @@ def register_blueprint_node_tools(mcp: FastMCP):
       - add_blueprint_get_self_component_reference(blueprint_name, component_name, node_position): Add a node that gets a reference to a component owned by the current Blueprint.
       - add_blueprint_self_reference(blueprint_name, node_position): Add a 'Get Self' node to a Blueprint's event graph that returns a reference to this actor.
       - find_blueprint_nodes(blueprint_name, node_type, event_type): Find nodes in a Blueprint's event graph.
+      - add_blueprint_get_variable_node(blueprint_name, variable_name, node_position): Add a 'Get' node for an existing Blueprint variable.
+      - add_blueprint_set_variable_node(blueprint_name, variable_name, node_position): Add a 'Set' node for an existing Blueprint variable.
     """
         if action not in ACTIONS:
             return {'success': False, 'message': f"Accion desconocida '{action}'. Disponibles: {list(ACTIONS.keys())}"}

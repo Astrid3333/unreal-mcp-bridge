@@ -54,7 +54,13 @@ public class UnrealMCP : ModuleRules
 				"AssetRegistry",
 				"Foliage",
 				"Landscape",
-				"Niagara"
+                "NavigationSystem",
+                "AIModule",
+                "GameplayTasks",
+				"Niagara",
+				"LevelSequence",
+				"MovieScene",
+				"MovieSceneTracks"
 			}
 		);
 		

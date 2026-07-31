@@ -29,4 +29,8 @@ private:
     // Activation control
     TSharedPtr<FJsonObject> HandleActivateNiagaraComponent(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDeactivateNiagaraComponent(const TSharedPtr<FJsonObject>& Params);
+
+    // User-exposed parameters on the NiagaraSystem ASSET (not a spawned instance)
+    TSharedPtr<FJsonObject> HandleAddNiagaraUserParameter(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleListNiagaraUserParameters(const TSharedPtr<FJsonObject>& Params);
 };

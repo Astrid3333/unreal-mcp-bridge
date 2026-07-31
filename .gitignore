@@ -160,3 +160,8 @@ Backup/
 #
 UNREAL/Source/
 UNREAL/SOURCE/
+*.bak
+*.bak.*
+*.bak-*
+*.bak_*
+*.bak[0-9]

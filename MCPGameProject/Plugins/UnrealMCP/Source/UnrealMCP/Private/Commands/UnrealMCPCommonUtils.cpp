@@ -1194,6 +1194,29 @@ bool FUnrealMCPCommonUtils::GetObjectProperty(UObject* Object, const FString& Pr
     else if (Property->IsA<FStructProperty>())
     {
         FStructProperty* StructProp = CastField<FStructProperty>(Property);
+        UScriptStruct* InnerStruct = StructProp->Struct;
+        if (InnerStruct == TBaseStructure<FLinearColor>::Get() || InnerStruct == TBaseStructure<FColor>::Get())
+        {
+            TArray<TSharedPtr<FJsonValue>> ColorArr;
+            if (InnerStruct == TBaseStructure<FLinearColor>::Get())
+            {
+                const FLinearColor* ColPtr = (const FLinearColor*)PropertyAddr;
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->R));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->G));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->B));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->A));
+            }
+            else
+            {
+                const FColor* ColPtr = (const FColor*)PropertyAddr;
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->R));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->G));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->B));
+                ColorArr.Add(MakeShared<FJsonValueNumber>(ColPtr->A));
+            }
+            OutValue = MakeShared<FJsonValueArray>(ColorArr);
+            return true;
+        }
         return GetStructPropertyByPath(StructProp->Struct, PropertyAddr, TEXT(""), OutValue, OutErrorMessage);
     }
     else if (Property->IsA<FByteProperty>())

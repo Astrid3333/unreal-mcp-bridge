@@ -1,4 +1,5 @@
 #include "Commands/UnrealMCPEditorCommands.h"
+#include "Components/BrushComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Engine.h"
 #include "Commands/UnrealMCPCommonUtils.h"
@@ -37,6 +38,9 @@
 #include "UObject/SavePackage.h"
 #include "PackageTools.h"
 #include "EngineUtils.h"
+#include "GameFramework/Volume.h"
+#include "ActorFactories/ActorFactory.h"
+#include "Builders/CubeBuilder.h"
 
 FUnrealMCPEditorCommands::FUnrealMCPEditorCommands()
 {
@@ -279,6 +283,19 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
         if (FoundClass)
         {
             NewActor = World->SpawnActor<AActor>(FoundClass, Location, Rotation, SpawnParams);
+
+            // Los actores AVolume (NavMeshBoundsVolume, BlockingVolume, etc.) necesitan
+            // un Brush real generado con un BrushBuilder. Sin esto quedan con bounds
+            // (0,0,0)-(0,0,0), y GetNavigableBounds() no devuelve tiles aunque
+            // build_navigation reporte exito.
+            if (AVolume* NewVolume = Cast<AVolume>(NewActor))
+            {
+                UCubeBuilder* CubeBuilder = NewObject<UCubeBuilder>();
+                CubeBuilder->X = 200.0f;
+                CubeBuilder->Y = 200.0f;
+                CubeBuilder->Z = 200.0f;
+                UActorFactory::CreateBrushForVolumeActor(NewVolume, CubeBuilder);
+            }
         }
         else
         {
@@ -292,6 +309,19 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
         Transform.SetScale3D(Scale);
         NewActor->SetActorTransform(Transform);
 
+
+        // Los AVolume con Brush recien creado necesitan que se les avise
+        // del cambio de geometria/transform para que GetActorBounds()
+        // (y por lo tanto get_navmesh_info) no siga viendo (0,0,0).
+        if (AVolume* SpawnedVolume = Cast<AVolume>(NewActor))
+        {
+            SpawnedVolume->PostEditChange();
+            if (UBrushComponent* BrushComp = SpawnedVolume->GetBrushComponent())
+            {
+                BrushComp->UpdateBounds();
+                BrushComp->MarkRenderStateDirty();
+            }
+        }
         // Return the created actor's details
         return FUnrealMCPCommonUtils::ActorToJsonObject(NewActor, true);
     }
@@ -1160,7 +1190,7 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetActorBounds(const TSh
     }
 
     FVector Origin, BoxExtent;
-    TargetActor->GetActorBounds(true, Origin, BoxExtent);
+    TargetActor->GetActorBounds(false, Origin, BoxExtent);
 
     TSharedPtr<FJsonObject> OriginObj = MakeShared<FJsonObject>();
     OriginObj->SetNumberField(TEXT("x"), Origin.X);

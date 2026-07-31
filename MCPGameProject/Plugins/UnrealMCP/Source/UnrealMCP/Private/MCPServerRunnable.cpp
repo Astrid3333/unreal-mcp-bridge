@@ -60,6 +60,7 @@ uint32 FMCPServerRunnable::Run()
                 
                 // Set socket options to improve connection stability
                 ClientSocket->SetNoDelay(true);
+                ClientSocket->SetNonBlocking(true);
                 int32 SocketBufferSize = 65536;  // 64KB buffer
                 ClientSocket->SetSendBufferSize(SocketBufferSize, SocketBufferSize);
                 ClientSocket->SetReceiveBufferSize(SocketBufferSize, SocketBufferSize);

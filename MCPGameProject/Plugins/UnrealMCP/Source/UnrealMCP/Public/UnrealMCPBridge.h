@@ -15,6 +15,9 @@
 #include "Commands/UnrealMCPUMGCommands.h"
 #include "Commands/UnrealMCPAudioCommands.h"
 #include "Commands/UnrealMCPNiagaraCommands.h"
+#include "Commands/UnrealMCPSequencerCommands.h"
+#include "Commands/UnrealMCPLandscapeCommands.h"
+#include "Commands/UnrealMCPAICommands.h"
 #include "UnrealMCPBridge.generated.h"
 
 class FMCPServerRunnable;
@@ -65,4 +68,7 @@ private:
 	TSharedPtr<FUnrealMCPUMGCommands> UMGCommands;
 	TSharedPtr<FUnrealMCPAudioCommands> AudioCommands;
 	TSharedPtr<FUnrealMCPNiagaraCommands> NiagaraCommands;
+	TSharedPtr<FUnrealMCPSequencerCommands> SequencerCommands;
+    TSharedPtr<FUnrealMCPLandscapeCommands> LandscapeCommands;
+    TSharedPtr<FUnrealMCPAICommands> AICommands;
 }; 

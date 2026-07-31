@@ -580,8 +580,93 @@ def register_editor_tools(mcp: FastMCP):
             error_msg = f'Error attaching actor: {e}'
             logger.error(error_msg)
             return {'success': False, 'message': error_msg}
+
+    def _take_screenshot(ctx: Context, filepath: str) -> Dict[str, Any]:
+        """Capture a screenshot of the active editor viewport and save it to disk.
+
+        Note: the C++ handler (HandleTakeScreenshot) only accepts 'filepath' — it
+        appends '.png' automatically if missing. There is no show_ui or resolution
+        parameter on the engine side despite what older docs may say.
+
+        Args:
+            ctx: The MCP context
+            filepath: Path (absolute or engine-relative) to save the .png to
+
+        Returns:
+            Dict containing filepath, success
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error('Failed to connect to Unreal Engine')
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'filepath': filepath}
+            logger.info(f'Taking screenshot: {params}')
+            response = unreal.send_command('take_screenshot', params)
+            if not response:
+                logger.error('No response from Unreal Engine')
+                return {'success': False, 'message': 'No response from Unreal Engine'}
+            logger.info(f'Take screenshot response: {response}')
+            if response.get('status') == 'error':
+                error_message = response.get('error', 'Unknown error')
+                logger.error(f'Error taking screenshot: {error_message}')
+                return {'success': False, 'message': error_message}
+            return response
+        except Exception as e:
+            error_msg = f'Error taking screenshot: {e}'
+            logger.error(error_msg)
+            return {'success': False, 'message': error_msg}
+
+    def _create_material(ctx: Context, name: str, path: str='/Game/Materials', base_color: List[float]=None, roughness: float=0.5, metallic: float=0.0, assign_to_actor: str='', slot_index: int=0) -> Dict[str, Any]:
+        """Create a new Material asset with editable BaseColor/Roughness/Metallic scalar+vector
+        parameters, save it to disk, and optionally assign it to an actor's mesh slot.
+
+        Args:
+            ctx: The MCP context
+            name: Name for the new material asset
+            path: Content-browser folder to create it in (default '/Game/Materials')
+            base_color: Optional [r, g, b] default base color (0.0-1.0 each, default mid-grey)
+            roughness: Default roughness value (default 0.5)
+            metallic: Default metallic value (default 0.0)
+            assign_to_actor: Optional actor name to assign the new material to immediately
+            slot_index: Material slot index to use if assign_to_actor is given (default 0)
+
+        Returns:
+            Dict containing material_path, saved_to_disk, assigned_to_actor, success
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error('Failed to connect to Unreal Engine')
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'name': name, 'path': path, 'roughness': float(roughness), 'metallic': float(metallic)}
+            if base_color is not None:
+                if not isinstance(base_color, list) or len(base_color) < 3:
+                    logger.error(f'Invalid base_color format: {base_color}. Must be a list of at least 3 float values.')
+                    return {'success': False, 'message': 'Invalid base_color format. Must be a list of at least 3 float values.'}
+                params['base_color'] = [float(v) for v in base_color]
+            if assign_to_actor:
+                params['assign_to_actor'] = assign_to_actor
+                params['slot_index'] = int(slot_index)
+            logger.info(f"Creating material '{name}': {params}")
+            response = unreal.send_command('create_material', params)
+            if not response:
+                logger.error('No response from Unreal Engine')
+                return {'success': False, 'message': 'No response from Unreal Engine'}
+            logger.info(f'Create material response: {response}')
+            if response.get('status') == 'error':
+                error_message = response.get('error', 'Unknown error')
+                logger.error(f'Error creating material: {error_message}')
+                return {'success': False, 'message': error_message}
+            return response
+        except Exception as e:
+            error_msg = f'Error creating material: {e}'
+            logger.error(error_msg)
+            return {'success': False, 'message': error_msg}
     logger.info('Editor tools registered successfully')
-    ACTIONS = {'get_actors_in_level': _get_actors_in_level, 'find_actors_by_name': _find_actors_by_name, 'spawn_actor': _spawn_actor, 'delete_actor': _delete_actor, 'set_actor_transform': _set_actor_transform, 'get_actor_properties': _get_actor_properties, 'set_actor_property': _set_actor_property, 'spawn_blueprint_actor': _spawn_blueprint_actor, 'spawn_foliage_instances': _spawn_foliage_instances, 'set_actor_material': _set_actor_material, 'get_actor_material': _get_actor_material, 'create_dynamic_material_instance': _create_dynamic_material_instance, 'set_material_scalar_parameter': _set_material_scalar_parameter, 'set_material_vector_parameter': _set_material_vector_parameter, 'duplicate_actor': _duplicate_actor, 'get_actor_bounds': _get_actor_bounds, 'attach_actor_to_actor': _attach_actor_to_actor}
+    ACTIONS = {'get_actors_in_level': _get_actors_in_level, 'find_actors_by_name': _find_actors_by_name, 'spawn_actor': _spawn_actor, 'delete_actor': _delete_actor, 'set_actor_transform': _set_actor_transform, 'get_actor_properties': _get_actor_properties, 'set_actor_property': _set_actor_property, 'focus_viewport': focus_viewport, 'take_screenshot': _take_screenshot, 'spawn_blueprint_actor': _spawn_blueprint_actor, 'spawn_foliage_instances': _spawn_foliage_instances, 'set_actor_material': _set_actor_material, 'get_actor_material': _get_actor_material, 'create_dynamic_material_instance': _create_dynamic_material_instance, 'set_material_scalar_parameter': _set_material_scalar_parameter, 'set_material_vector_parameter': _set_material_vector_parameter, 'create_material': _create_material, 'duplicate_actor': _duplicate_actor, 'get_actor_bounds': _get_actor_bounds, 'attach_actor_to_actor': _attach_actor_to_actor}
 
     @mcp.tool()
     def unreal_actor(ctx: Context, action: str, params: Dict[str, Any]={}) -> Any:
@@ -599,6 +684,8 @@ def register_editor_tools(mcp: FastMCP):
       - set_actor_transform(name, location, rotation, scale): Set the transform of an actor.
       - get_actor_properties(name): Get all properties of an actor.
       - set_actor_property(name, property_name, property_value): Set a property on an actor.
+      - focus_viewport(target, location, distance, orientation): Focus the editor viewport on an actor or location.
+      - take_screenshot(filepath): Capture a screenshot of the active viewport and save it as .png.
       - spawn_blueprint_actor(blueprint_name, actor_name, location, rotation): Spawn an actor from a Blueprint.
       - spawn_foliage_instances(mesh_path, landscape_name, count, region_center, region_radius, min_scale, max_scale): Scatter instanced foliage of a static mesh across a region of a landscape.
       - set_actor_material(actor_name, material_path, slot_index): Assign a material to a StaticMeshActor.
@@ -606,6 +693,7 @@ def register_editor_tools(mcp: FastMCP):
       - create_dynamic_material_instance(actor_name, slot_index): Create a UMaterialInstanceDynamic on a StaticMeshActor's slot so its parameters can be changed at runtime.
       - set_material_scalar_parameter(actor_name, parameter_name, value, slot_index): Set a scalar (float) parameter on a Material Instance, e.g. roughness, metallic, emissive strength.
       - set_material_vector_parameter(actor_name, parameter_name, r, g, b, a, slot_index): Set a vector/color parameter on a Material Instance, e.g. base color tint, emissive color.
+      - create_material(name, path, base_color, roughness, metallic, assign_to_actor, slot_index): Create a new Material asset with editable parameters, save it to disk, and optionally assign it to an actor.
       - duplicate_actor(actor_name, new_name, location_offset): Clone an existing actor, copying its mesh, materials and other properties.
       - get_actor_bounds(actor_name): Get the world-space bounding box of an actor (origin and extent).
       - attach_actor_to_actor(actor_name, parent_actor_name, socket_name, attachment_rule): Attach (parent) one actor to another, optionally at a specific socket.

@@ -270,18 +270,24 @@ from tools.editor_tools import register_editor_tools
 from tools.blueprint_tools import register_blueprint_tools
 from tools.node_tools import register_blueprint_node_tools
 from tools.project_tools import register_project_tools
+from tools.landscape_tools import register_landscape_tools
+from tools.ai_tools import register_ai_tools
 from tools.umg_tools import register_umg_tools
 from tools.audio_tools import register_audio_tools
 from tools.niagara_tools import register_niagara_tools
+from tools.sequencer_tools import register_sequencer_tools
 
 # Register tools
 register_editor_tools(mcp)
 register_blueprint_tools(mcp)
 register_blueprint_node_tools(mcp)
 register_project_tools(mcp)
+register_landscape_tools(mcp)
+register_ai_tools(mcp)
 register_umg_tools(mcp)  
 register_audio_tools(mcp)
 register_niagara_tools(mcp)
+register_sequencer_tools(mcp)
 
 @mcp.prompt()
 def info():

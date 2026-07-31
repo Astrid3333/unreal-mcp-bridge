@@ -59,6 +59,9 @@
 #include "Commands/UnrealMCPUMGCommands.h"
 #include "Commands/UnrealMCPAudioCommands.h"
 #include "Commands/UnrealMCPNiagaraCommands.h"
+#include "Commands/UnrealMCPSequencerCommands.h"
+#include "Commands/UnrealMCPLandscapeCommands.h"
+#include "Commands/UnrealMCPAICommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -73,6 +76,9 @@ UUnrealMCPBridge::UUnrealMCPBridge()
     UMGCommands = MakeShared<FUnrealMCPUMGCommands>();
     AudioCommands = MakeShared<FUnrealMCPAudioCommands>();
     NiagaraCommands = MakeShared<FUnrealMCPNiagaraCommands>();
+    SequencerCommands = MakeShared<FUnrealMCPSequencerCommands>();
+    LandscapeCommands = MakeShared<FUnrealMCPLandscapeCommands>();
+    AICommands = MakeShared<FUnrealMCPAICommands>();
 }
 
 UUnrealMCPBridge::~UUnrealMCPBridge()
@@ -84,6 +90,9 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
     UMGCommands.Reset();
     AudioCommands.Reset();
     NiagaraCommands.Reset();
+    SequencerCommands.Reset();
+    LandscapeCommands.Reset();
+    AICommands.Reset();
 }
 
 // Initialize subsystem
@@ -242,6 +251,7 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("focus_viewport") || 
                      CommandType == TEXT("take_screenshot") ||
                      CommandType == TEXT("set_actor_material") ||
+                     CommandType == TEXT("create_material") ||
                      CommandType == TEXT("spawn_foliage_instances") ||
                      CommandType == TEXT("get_actor_material") ||
                      CommandType == TEXT("create_dynamic_material_instance") ||
@@ -274,7 +284,9 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("add_blueprint_input_action_node") ||
                      CommandType == TEXT("add_blueprint_function_node") ||
                      CommandType == TEXT("add_blueprint_get_component_node") ||
-                     CommandType == TEXT("add_blueprint_variable"))
+                     CommandType == TEXT("add_blueprint_variable") ||
+                     CommandType == TEXT("add_blueprint_get_variable_node") ||
+                     CommandType == TEXT("add_blueprint_set_variable_node"))
             {
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
             }
@@ -309,10 +321,41 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_niagara_vector_parameter") ||
                      CommandType == TEXT("set_niagara_color_parameter") ||
                      CommandType == TEXT("activate_niagara_component") ||
-                     CommandType == TEXT("deactivate_niagara_component"))
+                     CommandType == TEXT("deactivate_niagara_component") ||
+                     CommandType == TEXT("add_niagara_user_parameter") ||
+                     CommandType == TEXT("list_niagara_user_parameters"))
             {
                 ResultJson = NiagaraCommands->HandleCommand(CommandType, Params);
             }
+            // Sequencer Commands
+            else if (CommandType == TEXT("create_level_sequence") ||
+                     CommandType == TEXT("add_actor_to_sequence") ||
+                     CommandType == TEXT("add_camera_cut_track") ||
+                     CommandType == TEXT("set_playback_range") ||
+                     CommandType == TEXT("open_level_sequence") ||
+                     CommandType == TEXT("add_transform_keyframe") ||
+                     CommandType == TEXT("add_property_keyframe"))
+            {
+                ResultJson = SequencerCommands->HandleCommand(CommandType, Params);
+            }
+                        else if (CommandType == TEXT("get_landscape_info") ||
+                     CommandType == TEXT("sculpt_landscape_region") ||
+                     CommandType == TEXT("paint_landscape_layer"))
+            {
+                ResultJson = LandscapeCommands->HandleCommand(CommandType, Params);
+            }
+            // AI Commands (NavMesh + Behavior Tree)
+            else if (CommandType == TEXT("get_navmesh_info") ||
+                     CommandType == TEXT("build_navigation") ||
+                     CommandType == TEXT("find_path") ||
+                     CommandType == TEXT("create_behavior_tree") ||
+                     CommandType == TEXT("create_blackboard") ||
+                     CommandType == TEXT("add_blackboard_key") ||
+                     CommandType == TEXT("run_behavior_tree_on_actor"))
+            {
+                ResultJson = AICommands->HandleCommand(CommandType, Params);
+            }
+
             else
             {
                 ResponseJson->SetStringField(TEXT("status"), TEXT("error"));

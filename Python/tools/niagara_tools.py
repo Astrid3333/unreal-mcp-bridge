@@ -20,6 +20,8 @@ _NIAGARA_ACTIONS = {
     "set_niagara_color_parameter": "set_niagara_color_parameter(actor_name, parameter_name, r, g, b, a): Set a User-exposed linear color parameter on a spawned Niagara component.",
     "activate_niagara_component": "activate_niagara_component(actor_name, reset): Activate (or restart) a Niagara component's effect.",
     "deactivate_niagara_component": "deactivate_niagara_component(actor_name): Deactivate a Niagara component's effect.",
+    "add_niagara_user_parameter": "add_niagara_user_parameter(system_path, parameter_name, parameter_type): Add a User-exposed parameter (float/vector/color) to a NiagaraSystem asset.",
+    "list_niagara_user_parameters": "list_niagara_user_parameters(system_path): List the User-exposed parameters already on a NiagaraSystem asset.",
 }
 
 

@@ -1,0 +1,82 @@
+"""
+MCP tools for NavMesh + Behavior Tree commands (unreal_ai router).
+Same structure as landscape_tools.py: each @mcp.tool() forwards to the C++
+FUnrealMCPAICommands handler via the existing Unreal connection.
+"""
+
+from typing import List, Optional
+from mcp.server.fastmcp import FastMCP
+
+
+
+def register_ai_tools(mcp: FastMCP):
+
+    @mcp.tool()
+    def get_navmesh_info() -> dict:
+        """Get info about the current RecastNavMesh: cell size, agent params, bounds."""
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        return conn.send_command("get_navmesh_info", {})
+
+    @mcp.tool()
+    def build_navigation() -> dict:
+        """Rebuild navigation data for the current editor world (equivalent to the 'Build Paths' button)."""
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        return conn.send_command("build_navigation", {})
+
+    @mcp.tool()
+    def find_path(start: List[float], end: List[float]) -> dict:
+        """
+        Find a path between two world-space points using the nav mesh.
+        start / end: [x, y, z]
+        Returns path_points (list of [x, y, z]) and is_partial.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        return conn.send_command("find_path", {"start": start, "end": end})
+
+    @mcp.tool()
+    def create_behavior_tree(name: str, path: str = "/Game/AI", blackboard_path: Optional[str] = None) -> dict:
+        """Create a new BehaviorTree asset. Optionally link an existing Blackboard by its asset path."""
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        params = {"name": name, "path": path}
+        if blackboard_path:
+            params["blackboard_path"] = blackboard_path
+        return conn.send_command("create_behavior_tree", params)
+
+    @mcp.tool()
+    def create_blackboard(name: str, path: str = "/Game/AI") -> dict:
+        """Create a new BlackboardData asset (empty, no keys yet)."""
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        return conn.send_command("create_blackboard", {"name": name, "path": path})
+
+    @mcp.tool()
+    def add_blackboard_key(blackboard_path: str, key_name: str, key_type: str) -> dict:
+        """
+        Add a key to an existing Blackboard asset.
+        key_type: one of Bool, Int, Float, Vector, Object, String
+        """
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        return conn.send_command("add_blackboard_key", {
+            "blackboard_path": blackboard_path,
+            "key_name": key_name,
+            "key_type": key_type,
+        })
+
+    @mcp.tool()
+    def run_behavior_tree_on_actor(actor_name: str, behavior_tree_path: str) -> dict:
+        """
+        Start running a Behavior Tree on a Pawn's existing AIController.
+        The pawn must already be possessed by an AIController (AIControllerClass set,
+        AutoPossessAI configured, etc.) - this tool won't spawn a controller for you.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        conn = get_unreal_connection()
+        return conn.send_command("run_behavior_tree_on_actor", {
+            "actor_name": actor_name,
+            "behavior_tree_path": behavior_tree_path,
+        })

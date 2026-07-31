@@ -10,6 +10,8 @@
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "NiagaraFunctionLibrary.h"
+#include "UObject/SavePackage.h"
+#include "Misc/PackageName.h"
 
 FUnrealMCPNiagaraCommands::FUnrealMCPNiagaraCommands()
 {
@@ -40,6 +42,14 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCommand(const FString& 
     else if (CommandType == TEXT("deactivate_niagara_component"))
     {
         return HandleDeactivateNiagaraComponent(Params);
+    }
+    else if (CommandType == TEXT("add_niagara_user_parameter"))
+    {
+        return HandleAddNiagaraUserParameter(Params);
+    }
+    else if (CommandType == TEXT("list_niagara_user_parameters"))
+    {
+        return HandleListNiagaraUserParameters(Params);
     }
 
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown niagara command: %s"), *CommandType));
@@ -350,6 +360,125 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleDeactivateNiagaraCompon
 
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetStringField(TEXT("actor_name"), ActorName);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// =====================================================================
+// add_niagara_user_parameter -- adds a User-exposed parameter to a
+// NiagaraSystem ASSET. Mirrors clicking "+" under "User Exposed" in the
+// System's Parameters panel.
+// =====================================================================
+TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleAddNiagaraUserParameter(const TSharedPtr<FJsonObject>& Params)
+{
+    FString SystemPath;
+    if (!Params->TryGetStringField(TEXT("system_path"), SystemPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'system_path' parameter"));
+    }
+
+    FString ParameterName;
+    if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_name' parameter"));
+    }
+
+    FString ParameterType = TEXT("float");
+    Params->TryGetStringField(TEXT("parameter_type"), ParameterType);
+
+    UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+    if (!System)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+    }
+
+    FNiagaraTypeDefinition TypeDef;
+    if (ParameterType == TEXT("vector"))
+    {
+        TypeDef = FNiagaraTypeDefinition::GetVec3Def();
+    }
+    else if (ParameterType == TEXT("color"))
+    {
+        TypeDef = FNiagaraTypeDefinition::GetColorDef();
+    }
+    else
+    {
+        TypeDef = FNiagaraTypeDefinition::GetFloatDef();
+    }
+
+    FString FullName = ParameterName.StartsWith(TEXT("User.")) ? ParameterName : (TEXT("User.") + ParameterName);
+    FNiagaraVariable NewVar(TypeDef, FName(*FullName));
+
+    FNiagaraUserRedirectionParameterStore& ExposedParams = System->GetExposedParameters();
+
+    TArray<FNiagaraVariable> ExistingVars;
+    ExposedParams.GetParameters(ExistingVars);
+    for (const FNiagaraVariable& V : ExistingVars)
+    {
+        if (V.GetName() == NewVar.GetName())
+        {
+            return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parameter '%s' already exists on this system"), *FullName));
+        }
+    }
+
+    ExposedParams.AddParameter(NewVar);
+    System->PostEditChange();
+    System->MarkPackageDirty();
+
+    UPackage* Package = System->GetOutermost();
+    FString PackageFileName = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    bool bSaved = UPackage::SavePackage(Package, System, *PackageFileName, SaveArgs);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("system_path"), SystemPath);
+    ResultObj->SetStringField(TEXT("parameter_name"), FullName);
+    ResultObj->SetStringField(TEXT("parameter_type"), ParameterType);
+    ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// =====================================================================
+// list_niagara_user_parameters -- reads back what's exposed on a
+// NiagaraSystem asset.
+// =====================================================================
+TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleListNiagaraUserParameters(const TSharedPtr<FJsonObject>& Params)
+{
+    FString SystemPath;
+    if (!Params->TryGetStringField(TEXT("system_path"), SystemPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'system_path' parameter"));
+    }
+
+    UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+    if (!System)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+    }
+
+    FNiagaraUserRedirectionParameterStore& ExposedParams = System->GetExposedParameters();
+    TArray<FNiagaraVariable> Variables;
+    ExposedParams.GetParameters(Variables);
+
+    TArray<TSharedPtr<FJsonValue>> ParamArray;
+    for (const FNiagaraVariable& Var : Variables)
+    {
+        FString TypeStr = TEXT("other");
+        if (Var.GetType() == FNiagaraTypeDefinition::GetFloatDef()) TypeStr = TEXT("float");
+        else if (Var.GetType() == FNiagaraTypeDefinition::GetVec3Def()) TypeStr = TEXT("vector");
+        else if (Var.GetType() == FNiagaraTypeDefinition::GetColorDef()) TypeStr = TEXT("color");
+
+        TSharedPtr<FJsonObject> ParamObj = MakeShared<FJsonObject>();
+        ParamObj->SetStringField(TEXT("name"), Var.GetName().ToString());
+        ParamObj->SetStringField(TEXT("type"), TypeStr);
+        ParamArray.Add(MakeShared<FJsonValueObject>(ParamObj));
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("system_path"), SystemPath);
+    ResultObj->SetArrayField(TEXT("parameters"), ParamArray);
     ResultObj->SetBoolField(TEXT("success"), true);
     return ResultObj;
 }
