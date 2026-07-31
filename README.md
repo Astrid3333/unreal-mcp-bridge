@@ -27,10 +27,18 @@ The Unreal MCP integration provides comprehensive tools for controlling Unreal E
 
 | Category | Capabilities |
 |----------|-------------|
-| **Actor Management** | • Create and delete actors (cubes, spheres, lights, cameras, etc.)<br>• Set actor transforms (position, rotation, scale)<br>• Query actor properties and find actors by name<br>• List all actors in the current level |
+| **Actor Management** | • Create, duplicate, and delete actors (cubes, spheres, lights, cameras, etc.)<br>• Set actor transforms (position, rotation, scale)<br>• Query actor properties, bounds, and material assignments<br>• Attach actors to one another (with optional socket)<br>• Find actors by name pattern; list all actors in the current level |
+| **Materials** | • Create new Material assets with editable BaseColor/Roughness/Metallic<br>• Assign materials to actor mesh slots; query the currently assigned material<br>• Create dynamic material instances; set scalar and vector (color) parameters at runtime |
+| **Foliage** | • Scatter instanced foliage of a static mesh across a region of a landscape, with randomized scale |
+| **Landscape** | • Query landscape info<br>• Sculpt landscape regions<br>• Paint landscape layers |
 | **Blueprint Development** | • Create new Blueprint classes with custom components<br>• Add and configure components (mesh, camera, light, etc.)<br>• Set component properties and physics settings<br>• Compile Blueprints and spawn Blueprint actors<br>• Create input mappings for player controls |
 | **Blueprint Node Graph** | • Add event nodes (BeginPlay, Tick, etc.)<br>• Create function call nodes and connect them<br>• Add variables with custom types and default values<br>• Create component and self references<br>• Find and manage nodes in the graph |
-| **Editor Control** | • Focus viewport on specific actors or locations<br>• Control viewport camera orientation and distance |
+| **UMG / Widgets** | • Create UMG Widget Blueprints<br>• Add text blocks and buttons; bind button events<br>• Bind text block properties; add widgets to the viewport |
+| **Audio** | • Create sound cues, sound classes, and sound attenuation assets<br>• Spawn ambient sound actors and configure their properties<br>• Play 2D sounds |
+| **Niagara** | • Spawn Niagara systems and activate/deactivate components<br>• Set float, vector, and color user parameters<br>• Add and list user-exposed parameters |
+| **Sequencer** | • Create and open Level Sequences<br>• Add actors to a sequence and set the playback range<br>• Add camera cut tracks<br>• Keyframe transforms and arbitrary properties |
+| **AI / Navigation** | • Query navmesh info and rebuild navigation<br>• Find paths between points<br>• Create Behavior Trees and Blackboards; add blackboard keys<br>• Run a Behavior Tree on an actor |
+| **Editor Control** | • Focus viewport on specific actors or locations, with configurable distance and camera orientation<br>• Capture a screenshot of the active viewport |
 
 All these capabilities are accessible through natural language commands via AI assistants, making it easy to automate and control Unreal Engine workflows.
 
@@ -139,7 +147,7 @@ Depending on which MCP client you're using, the configuration file location will
 
 | MCP Client | Configuration File Location | Notes |
 |------------|------------------------------|-------|
-| Claude Desktop | `~/.config/claude-desktop/mcp.json` | On Windows: `%USERPROFILE%\.config\claude-desktop\mcp.json` |
+| Claude Desktop | `~/.config/Claude/claude_desktop_config.json` (note capital `Claude`) | On Windows: `%APPDATA%\Claude\claude_desktop_config.json` |
 | Cursor | `.cursor/mcp.json` | Located in your project root directory |
 | Windsurf | `~/.config/windsurf/mcp.json` | On Windows: `%USERPROFILE%\.config\windsurf\mcp.json` |
 
