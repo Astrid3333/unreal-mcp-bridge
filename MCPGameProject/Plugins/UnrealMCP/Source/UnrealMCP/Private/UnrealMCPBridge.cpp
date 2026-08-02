@@ -62,6 +62,7 @@
 #include "Commands/UnrealMCPSequencerCommands.h"
 #include "Commands/UnrealMCPLandscapeCommands.h"
 #include "Commands/UnrealMCPAICommands.h"
+#include "Commands/UnrealMCPComponentCommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -79,6 +80,7 @@ UUnrealMCPBridge::UUnrealMCPBridge()
     SequencerCommands = MakeShared<FUnrealMCPSequencerCommands>();
     LandscapeCommands = MakeShared<FUnrealMCPLandscapeCommands>();
     AICommands = MakeShared<FUnrealMCPAICommands>();
+    ComponentCommands = MakeShared<FUnrealMCPComponentCommands>();
 }
 
 UUnrealMCPBridge::~UUnrealMCPBridge()
@@ -93,6 +95,7 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
     SequencerCommands.Reset();
     LandscapeCommands.Reset();
     AICommands.Reset();
+    ComponentCommands.Reset();
 }
 
 // Initialize subsystem
@@ -252,6 +255,11 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("take_screenshot") ||
                      CommandType == TEXT("set_actor_material") ||
                      CommandType == TEXT("create_material") ||
+                     CommandType == TEXT("import_texture") ||
+                     CommandType == TEXT("create_pbr_material") ||
+                     CommandType == TEXT("get_material_properties") ||
+                     CommandType == TEXT("set_material_blend_mode") ||
+                     CommandType == TEXT("create_moss_stone_material") ||
                      CommandType == TEXT("spawn_foliage_instances") ||
                      CommandType == TEXT("get_actor_material") ||
                      CommandType == TEXT("create_dynamic_material_instance") ||
@@ -323,7 +331,8 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("activate_niagara_component") ||
                      CommandType == TEXT("deactivate_niagara_component") ||
                      CommandType == TEXT("add_niagara_user_parameter") ||
-                     CommandType == TEXT("list_niagara_user_parameters"))
+                     CommandType == TEXT("list_niagara_user_parameters") ||
+                     CommandType == TEXT("create_niagara_emitter"))
             {
                 ResultJson = NiagaraCommands->HandleCommand(CommandType, Params);
             }
@@ -340,11 +349,21 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
             }
                         else if (CommandType == TEXT("get_landscape_info") ||
                      CommandType == TEXT("sculpt_landscape_region") ||
-                     CommandType == TEXT("paint_landscape_layer"))
+                     CommandType == TEXT("paint_landscape_layer") ||
+                     CommandType == TEXT("create_landscape_layer_info") ||
+                     CommandType == TEXT("add_landscape_material_layer_blend_input") ||
+                     CommandType == TEXT("create_landscape_material_with_layer_blend") ||
+                     CommandType == TEXT("set_landscape_material"))
             {
                 ResultJson = LandscapeCommands->HandleCommand(CommandType, Params);
             }
             // AI Commands (NavMesh + Behavior Tree)
+            else if (CommandType == TEXT("list_components") ||
+                     CommandType == TEXT("get_component_property") ||
+                     CommandType == TEXT("set_actor_component_property"))
+            {
+                ResultJson = ComponentCommands->HandleCommand(CommandType, Params);
+            }
             else if (CommandType == TEXT("get_navmesh_info") ||
                      CommandType == TEXT("build_navigation") ||
                      CommandType == TEXT("find_path") ||

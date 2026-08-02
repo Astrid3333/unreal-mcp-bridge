@@ -33,6 +33,19 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionVertexNormalWS.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+#include "Materials/MaterialExpressionDotProduct.h"
+#include "Materials/MaterialExpressionClamp.h"
+#include "Materials/MaterialExpressionNoise.h"
+#include "Materials/MaterialExpressionWorldPosition.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "AssetImportTask.h"
+#include "Engine/Texture2D.h"
+#include "Materials/MaterialExpressionTextureSample.h"
+#include "Materials/MaterialExpressionMultiply.h"
+#include "Materials/MaterialExpressionLinearInterpolate.h"
 #include "Factories/MaterialFactoryNew.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
@@ -104,6 +117,26 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     else if (CommandType == TEXT("create_material"))
     {
         return HandleCreateMaterial(Params);
+    }
+    else if (CommandType == TEXT("import_texture"))
+    {
+        return HandleImportTexture(Params);
+    }
+    else if (CommandType == TEXT("create_pbr_material"))
+    {
+        return HandleCreatePBRMaterial(Params);
+    }
+    else if (CommandType == TEXT("get_material_properties"))
+    {
+        return HandleGetMaterialProperties(Params);
+    }
+    else if (CommandType == TEXT("set_material_blend_mode"))
+    {
+        return HandleSetMaterialBlendMode(Params);
+    }
+    else if (CommandType == TEXT("create_moss_stone_material"))
+    {
+        return HandleCreateMossStoneMaterial(Params);
     }
     else if (CommandType == TEXT("duplicate_actor"))
     {
@@ -1381,6 +1414,478 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMaterial(const TSh
 
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetStringField(TEXT("material_path"), NewMaterial->GetPathName());
+    ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
+    ResultObj->SetBoolField(TEXT("assigned_to_actor"), bAssigned);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetMaterialProperties(const TSharedPtr<FJsonObject>& Params)
+{
+    FString MaterialPath;
+    if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'material_path' parameter"));
+    }
+
+    UMaterialInterface* MaterialInterface = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+    if (!MaterialInterface)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("Failed to load material at '%s'"), *MaterialPath));
+    }
+
+    EBlendMode CurrentBlendMode = MaterialInterface->GetBlendMode();
+
+    FMaterialShadingModelField ShadingModels = MaterialInterface->GetShadingModels();
+    EMaterialShadingModel FirstShadingModel = MSM_DefaultLit;
+    for (int32 i = 0; i < MSM_NUM; ++i)
+    {
+        if (ShadingModels.HasShadingModel((EMaterialShadingModel)i))
+        {
+            FirstShadingModel = (EMaterialShadingModel)i;
+            break;
+        }
+    }
+
+    bool bIsInstance = MaterialInterface->IsA<UMaterialInstance>();
+
+    float OpacityParam = 1.0f;
+    MaterialInterface->GetScalarParameterValue(FMaterialParameterInfo(TEXT("Opacity")), OpacityParam);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("material_path"), MaterialPath);
+    ResultObj->SetStringField(TEXT("blend_mode"), UEnum::GetValueAsString(CurrentBlendMode));
+    ResultObj->SetStringField(TEXT("shading_model"), UEnum::GetValueAsString(FirstShadingModel));
+    ResultObj->SetBoolField(TEXT("is_material_instance"), bIsInstance);
+    ResultObj->SetNumberField(TEXT("opacity_param"), OpacityParam);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetMaterialBlendMode(const TSharedPtr<FJsonObject>& Params)
+{
+    FString MaterialPath;
+    if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'material_path' parameter"));
+    }
+
+    FString BlendModeStr;
+    if (!Params->TryGetStringField(TEXT("blend_mode"), BlendModeStr))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'blend_mode' parameter"));
+    }
+
+    FString B = BlendModeStr.ToLower();
+    EBlendMode NewBlendMode;
+    if (B == TEXT("opaque"))              NewBlendMode = BLEND_Opaque;
+    else if (B == TEXT("masked"))         NewBlendMode = BLEND_Masked;
+    else if (B == TEXT("translucent"))    NewBlendMode = BLEND_Translucent;
+    else if (B == TEXT("additive"))       NewBlendMode = BLEND_Additive;
+    else if (B == TEXT("modulate"))       NewBlendMode = BLEND_Modulate;
+    else if (B == TEXT("alphacomposite")) NewBlendMode = BLEND_AlphaComposite;
+    else
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Unknown blend_mode '%s'. Valid: opaque, masked, translucent, additive, modulate, alphacomposite"),
+            *BlendModeStr));
+    }
+
+    UMaterial* Material = LoadObject<UMaterial>(nullptr, *MaterialPath);
+    if (!Material)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Failed to load UMaterial en '%s' (si es un Material Instance, esta funcion no aplica)"),
+            *MaterialPath));
+    }
+
+    EBlendMode OldBlendMode = Material->GetBlendMode();
+
+    Material->BlendMode = NewBlendMode;
+    Material->PreEditChange(nullptr);
+    Material->PostEditChange();
+    Material->MarkPackageDirty();
+
+    UPackage* Package = Material->GetOutermost();
+    FString PackageFileName = FPackageName::LongPackageNameToFilename(
+        Package->GetName(), FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    bool bSaved = UPackage::SavePackage(Package, Material, *PackageFileName, SaveArgs);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("material_path"), MaterialPath);
+    ResultObj->SetStringField(TEXT("old_blend_mode"), UEnum::GetValueAsString(OldBlendMode));
+    ResultObj->SetStringField(TEXT("new_blend_mode"), UEnum::GetValueAsString(NewBlendMode));
+    ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMossStoneMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString MaterialName;
+    if (!Params->TryGetStringField(TEXT("name"), MaterialName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+    }
+
+    FString FolderPath = TEXT("/Game/Materials");
+    Params->TryGetStringField(TEXT("path"), FolderPath);
+
+    FLinearColor StoneColorValue(0.5f, 0.5f, 0.45f, 1.0f);
+    const TArray<TSharedPtr<FJsonValue>>* StoneColorArray;
+    if (Params->TryGetArrayField(TEXT("stone_color"), StoneColorArray) && StoneColorArray->Num() >= 3)
+    {
+        StoneColorValue.R = (*StoneColorArray)[0]->AsNumber();
+        StoneColorValue.G = (*StoneColorArray)[1]->AsNumber();
+        StoneColorValue.B = (*StoneColorArray)[2]->AsNumber();
+    }
+
+    FLinearColor MossColorValue(0.15f, 0.35f, 0.12f, 1.0f);
+    const TArray<TSharedPtr<FJsonValue>>* MossColorArray;
+    if (Params->TryGetArrayField(TEXT("moss_color"), MossColorArray) && MossColorArray->Num() >= 3)
+    {
+        MossColorValue.R = (*MossColorArray)[0]->AsNumber();
+        MossColorValue.G = (*MossColorArray)[1]->AsNumber();
+        MossColorValue.B = (*MossColorArray)[2]->AsNumber();
+    }
+
+    double RoughnessValue = 0.8;
+    Params->TryGetNumberField(TEXT("roughness"), RoughnessValue);
+
+    double MossAmountValue = 0.4;
+    Params->TryGetNumberField(TEXT("moss_amount"), MossAmountValue);
+
+    double NoiseScaleValue = 20.0;
+    Params->TryGetNumberField(TEXT("noise_scale"), NoiseScaleValue);
+
+    FString PackageName = FolderPath / MaterialName;
+    PackageName = UPackageTools::SanitizePackageName(PackageName);
+
+    UPackage* Package = CreatePackage(*PackageName);
+    if (!Package)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for material"));
+    }
+
+    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+    UMaterial* NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+        UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+
+    if (!NewMaterial)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create material asset"));
+    }
+
+    // -- Parametros expuestos --
+    UMaterialExpressionVectorParameter* StoneColorParam = NewObject<UMaterialExpressionVectorParameter>(NewMaterial);
+    StoneColorParam->ParameterName = FName(TEXT("StoneColor"));
+    StoneColorParam->DefaultValue = StoneColorValue;
+    NewMaterial->GetExpressionCollection().AddExpression(StoneColorParam);
+
+    UMaterialExpressionVectorParameter* MossColorParam = NewObject<UMaterialExpressionVectorParameter>(NewMaterial);
+    MossColorParam->ParameterName = FName(TEXT("MossColor"));
+    MossColorParam->DefaultValue = MossColorValue;
+    NewMaterial->GetExpressionCollection().AddExpression(MossColorParam);
+
+    UMaterialExpressionScalarParameter* RoughnessParam = NewObject<UMaterialExpressionScalarParameter>(NewMaterial);
+    RoughnessParam->ParameterName = FName(TEXT("Roughness"));
+    RoughnessParam->DefaultValue = RoughnessValue;
+    NewMaterial->GetExpressionCollection().AddExpression(RoughnessParam);
+
+    UMaterialExpressionScalarParameter* MossAmountParam = NewObject<UMaterialExpressionScalarParameter>(NewMaterial);
+    MossAmountParam->ParameterName = FName(TEXT("MossAmount"));
+    MossAmountParam->DefaultValue = MossAmountValue;
+    NewMaterial->GetExpressionCollection().AddExpression(MossAmountParam);
+
+    // -- Mask: normal hacia arriba . (0,0,1), clampeada 0..1 --
+    UMaterialExpressionVertexNormalWS* NormalWS = NewObject<UMaterialExpressionVertexNormalWS>(NewMaterial);
+    NewMaterial->GetExpressionCollection().AddExpression(NormalWS);
+
+    UMaterialExpressionConstant3Vector* UpVector = NewObject<UMaterialExpressionConstant3Vector>(NewMaterial);
+    UpVector->Constant = FLinearColor(0.0f, 0.0f, 1.0f);
+    NewMaterial->GetExpressionCollection().AddExpression(UpVector);
+
+    UMaterialExpressionDotProduct* NdotUp = NewObject<UMaterialExpressionDotProduct>(NewMaterial);
+    NdotUp->A.Expression = NormalWS;
+    NdotUp->B.Expression = UpVector;
+    NewMaterial->GetExpressionCollection().AddExpression(NdotUp);
+
+    UMaterialExpressionClamp* UpMask = NewObject<UMaterialExpressionClamp>(NewMaterial);
+    UpMask->Input.Expression = NdotUp;
+    UpMask->MinDefault = 0.0f;
+    UpMask->MaxDefault = 1.0f;
+    NewMaterial->GetExpressionCollection().AddExpression(UpMask);
+
+    // -- Ruido: conectamos EXPLICITAMENTE WorldPosition al pin Position.
+    // No confiar en un supuesto default a World Position cuando el pin
+    // queda sin conectar -- eso fue lo que causaba que el ruido saliera
+    // constante (sin grano, solo el blend base por normal de cara).
+    UMaterialExpressionWorldPosition* WorldPosNode = NewObject<UMaterialExpressionWorldPosition>(NewMaterial);
+    NewMaterial->GetExpressionCollection().AddExpression(WorldPosNode);
+
+    UMaterialExpressionNoise* NoiseNode = NewObject<UMaterialExpressionNoise>(NewMaterial);
+    NoiseNode->Position.Expression = WorldPosNode;
+    NoiseNode->Scale = NoiseScaleValue;
+    NoiseNode->OutputMin = 0.0f;
+    NoiseNode->OutputMax = 1.0f;
+    NewMaterial->GetExpressionCollection().AddExpression(NoiseNode);
+
+    // -- Combinar: UpMask * Noise * MossAmount --
+    UMaterialExpressionMultiply* MaskTimesNoise = NewObject<UMaterialExpressionMultiply>(NewMaterial);
+    MaskTimesNoise->A.Expression = UpMask;
+    MaskTimesNoise->B.Expression = NoiseNode;
+    NewMaterial->GetExpressionCollection().AddExpression(MaskTimesNoise);
+
+    UMaterialExpressionMultiply* FinalMask = NewObject<UMaterialExpressionMultiply>(NewMaterial);
+    FinalMask->A.Expression = MaskTimesNoise;
+    FinalMask->B.Expression = MossAmountParam;
+    NewMaterial->GetExpressionCollection().AddExpression(FinalMask);
+
+    // -- Lerp(StoneColor, MossColor, FinalMask) -> BaseColor --
+    UMaterialExpressionLinearInterpolate* ColorLerp = NewObject<UMaterialExpressionLinearInterpolate>(NewMaterial);
+    ColorLerp->A.Expression = StoneColorParam;
+    ColorLerp->B.Expression = MossColorParam;
+    ColorLerp->Alpha.Expression = FinalMask;
+    NewMaterial->GetExpressionCollection().AddExpression(ColorLerp);
+
+    NewMaterial->GetEditorOnlyData()->BaseColor.Expression = ColorLerp;
+    NewMaterial->GetEditorOnlyData()->Roughness.Expression = RoughnessParam;
+
+    NewMaterial->PreEditChange(nullptr);
+    NewMaterial->PostEditChange();
+    NewMaterial->MarkPackageDirty();
+    FAssetRegistryModule::AssetCreated(NewMaterial);
+
+    FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    bool bSaved = UPackage::SavePackage(Package, NewMaterial, *PackageFileName, SaveArgs);
+
+    FString AssignToActor;
+    bool bAssigned = false;
+    if (Params->TryGetStringField(TEXT("assign_to_actor"), AssignToActor) && !AssignToActor.IsEmpty())
+    {
+        int32 SlotIndex = 0;
+        double SlotIndexNum;
+        if (Params->TryGetNumberField(TEXT("slot_index"), SlotIndexNum))
+        {
+            SlotIndex = (int32)SlotIndexNum;
+        }
+        for (TActorIterator<AActor> It(GWorld); It; ++It)
+        {
+            if (It->GetName() == AssignToActor)
+            {
+                TArray<UActorComponent*> Components;
+                It->GetComponents(UStaticMeshComponent::StaticClass(), Components);
+                for (UActorComponent* Comp : Components)
+                {
+                    if (UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(Comp))
+                    {
+                        MeshComp->SetMaterial(SlotIndex, NewMaterial);
+                        bAssigned = true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("material_path"), NewMaterial->GetPathName());
+    ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
+    ResultObj->SetBoolField(TEXT("assigned_to_actor"), bAssigned);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleImportTexture(const TSharedPtr<FJsonObject>& Params)
+{
+    FString SourcePath;
+    if (!Params->TryGetStringField(TEXT("source_path"), SourcePath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'source_path' parameter"));
+    }
+    if (!FPaths::FileExists(SourcePath))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Archivo no encontrado: %s"), *SourcePath));
+    }
+
+    FString TextureName = FPaths::GetBaseFilename(SourcePath);
+    Params->TryGetStringField(TEXT("name"), TextureName);
+
+    FString FolderPath = TEXT("/Game/Textures");
+    Params->TryGetStringField(TEXT("path"), FolderPath);
+
+    bool bSRGB = true;
+    Params->TryGetBoolField(TEXT("srgb"), bSRGB);
+
+    IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+
+    UAssetImportTask* ImportTask = NewObject<UAssetImportTask>();
+    ImportTask->Filename = SourcePath;
+    ImportTask->DestinationPath = FolderPath;
+    ImportTask->DestinationName = TextureName;
+    ImportTask->bAutomated = true;
+    ImportTask->bSave = true;
+    ImportTask->bReplaceExisting = true;
+
+    TArray<UAssetImportTask*> Tasks = { ImportTask };
+    AssetTools.ImportAssetTasks(Tasks);
+
+    if (ImportTask->GetObjects().Num() == 0)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Fallo al importar '%s' -- revisa que el formato sea soportado (png/jpg/tga/exr/hdr)"), *SourcePath));
+    }
+
+    UTexture2D* NewTexture = Cast<UTexture2D>(ImportTask->GetObjects()[0]);
+    if (!NewTexture)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("El asset importado no es un UTexture2D"));
+    }
+
+    NewTexture->SRGB = bSRGB;
+    NewTexture->PreEditChange(nullptr);
+    NewTexture->PostEditChange();
+    NewTexture->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("texture_path"), NewTexture->GetPathName());
+    ResultObj->SetNumberField(TEXT("width"), NewTexture->GetSizeX());
+    ResultObj->SetNumberField(TEXT("height"), NewTexture->GetSizeY());
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreatePBRMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString MaterialName;
+    if (!Params->TryGetStringField(TEXT("name"), MaterialName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+    }
+
+    FString FolderPath = TEXT("/Game/Materials");
+    Params->TryGetStringField(TEXT("path"), FolderPath);
+
+    FString PackageName = FolderPath / MaterialName;
+    PackageName = UPackageTools::SanitizePackageName(PackageName);
+
+    UPackage* Package = CreatePackage(*PackageName);
+    if (!Package)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for material"));
+    }
+
+    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+    UMaterial* NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+        UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+    if (!NewMaterial)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create material asset"));
+    }
+
+    TArray<FString> Wired;
+
+    auto MakeSample = [&](const FString& TexPath, EMaterialSamplerType SamplerType) -> UMaterialExpressionTextureSample*
+    {
+        if (TexPath.IsEmpty()) return nullptr;
+        UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *TexPath);
+        if (!Tex) return nullptr;
+        UMaterialExpressionTextureSample* Sample = NewObject<UMaterialExpressionTextureSample>(NewMaterial);
+        Sample->Texture = Tex;
+        Sample->SamplerType = SamplerType;
+        NewMaterial->GetExpressionCollection().AddExpression(Sample);
+        return Sample;
+    };
+
+    FString BaseColorPath, NormalPath, RoughnessPath, MetallicPath, AOPath;
+    Params->TryGetStringField(TEXT("base_color_texture"), BaseColorPath);
+    Params->TryGetStringField(TEXT("normal_texture"), NormalPath);
+    Params->TryGetStringField(TEXT("roughness_texture"), RoughnessPath);
+    Params->TryGetStringField(TEXT("metallic_texture"), MetallicPath);
+    Params->TryGetStringField(TEXT("ao_texture"), AOPath);
+
+    if (UMaterialExpressionTextureSample* S = MakeSample(BaseColorPath, SAMPLERTYPE_Color))
+    {
+        NewMaterial->GetEditorOnlyData()->BaseColor.Expression = S;
+        Wired.Add(TEXT("base_color"));
+    }
+    if (UMaterialExpressionTextureSample* S = MakeSample(NormalPath, SAMPLERTYPE_Normal))
+    {
+        NewMaterial->GetEditorOnlyData()->Normal.Expression = S;
+        Wired.Add(TEXT("normal"));
+    }
+    if (UMaterialExpressionTextureSample* S = MakeSample(RoughnessPath, SAMPLERTYPE_LinearColor))
+    {
+        NewMaterial->GetEditorOnlyData()->Roughness.Expression = S;
+        NewMaterial->GetEditorOnlyData()->Roughness.OutputIndex = 1;
+        Wired.Add(TEXT("roughness"));
+    }
+    if (UMaterialExpressionTextureSample* S = MakeSample(MetallicPath, SAMPLERTYPE_LinearColor))
+    {
+        NewMaterial->GetEditorOnlyData()->Metallic.Expression = S;
+        NewMaterial->GetEditorOnlyData()->Metallic.OutputIndex = 1;
+        Wired.Add(TEXT("metallic"));
+    }
+    if (UMaterialExpressionTextureSample* S = MakeSample(AOPath, SAMPLERTYPE_LinearColor))
+    {
+        NewMaterial->GetEditorOnlyData()->AmbientOcclusion.Expression = S;
+        NewMaterial->GetEditorOnlyData()->AmbientOcclusion.OutputIndex = 1;
+        Wired.Add(TEXT("ao"));
+    }
+
+    if (Wired.Num() == 0)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Ninguna textura valida -- pasa al menos base_color_texture con un path ya importado (/Game/Textures/...)"));
+    }
+
+    NewMaterial->PreEditChange(nullptr);
+    NewMaterial->PostEditChange();
+    NewMaterial->MarkPackageDirty();
+    FAssetRegistryModule::AssetCreated(NewMaterial);
+
+    FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    bool bSaved = UPackage::SavePackage(Package, NewMaterial, *PackageFileName, SaveArgs);
+
+    FString AssignToActor;
+    bool bAssigned = false;
+    if (Params->TryGetStringField(TEXT("assign_to_actor"), AssignToActor) && !AssignToActor.IsEmpty())
+    {
+        int32 SlotIndex = 0;
+        double SlotIndexNum;
+        if (Params->TryGetNumberField(TEXT("slot_index"), SlotIndexNum)) SlotIndex = (int32)SlotIndexNum;
+
+        for (TActorIterator<AActor> It(GWorld); It; ++It)
+        {
+            if (It->GetName() == AssignToActor || It->GetActorLabel() == AssignToActor)
+            {
+                TArray<UActorComponent*> Components;
+                It->GetComponents(UStaticMeshComponent::StaticClass(), Components);
+                for (UActorComponent* Comp : Components)
+                {
+                    if (UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(Comp))
+                    {
+                        MeshComp->SetMaterial(SlotIndex, NewMaterial);
+                        bAssigned = true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("material_path"), NewMaterial->GetPathName());
+    TArray<TSharedPtr<FJsonValue>> WiredArr;
+    for (const FString& W : Wired) WiredArr.Add(MakeShared<FJsonValueString>(W));
+    ResultObj->SetArrayField(TEXT("channels_wired"), WiredArr);
     ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
     ResultObj->SetBoolField(TEXT("assigned_to_actor"), bAssigned);
     ResultObj->SetBoolField(TEXT("success"), true);

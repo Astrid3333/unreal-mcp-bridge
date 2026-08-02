@@ -33,4 +33,7 @@ private:
     // User-exposed parameters on the NiagaraSystem ASSET (not a spawned instance)
     TSharedPtr<FJsonObject> HandleAddNiagaraUserParameter(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListNiagaraUserParameters(const TSharedPtr<FJsonObject>& Params);
+
+    // Asset creation
+    TSharedPtr<FJsonObject> HandleCreateNiagaraEmitter(const TSharedPtr<FJsonObject>& Params);
 };

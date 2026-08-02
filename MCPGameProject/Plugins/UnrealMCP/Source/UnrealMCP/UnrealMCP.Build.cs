@@ -57,7 +57,7 @@ public class UnrealMCP : ModuleRules
                 "NavigationSystem",
                 "AIModule",
                 "GameplayTasks",
-				"Niagara",
+				"Niagara", "NiagaraEditor",
 				"LevelSequence",
 				"MovieScene",
 				"MovieSceneTracks"

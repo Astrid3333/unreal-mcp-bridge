@@ -12,6 +12,10 @@
 #include "NiagaraFunctionLibrary.h"
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
+#include "NiagaraEmitterFactoryNew.h"
+#include "NiagaraEmitter.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "PackageTools.h"
 
 FUnrealMCPNiagaraCommands::FUnrealMCPNiagaraCommands()
 {
@@ -50,6 +54,10 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCommand(const FString& 
     else if (CommandType == TEXT("list_niagara_user_parameters"))
     {
         return HandleListNiagaraUserParameters(Params);
+    }
+    else if (CommandType == TEXT("create_niagara_emitter"))
+    {
+        return HandleCreateNiagaraEmitter(Params);
     }
 
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown niagara command: %s"), *CommandType));
@@ -479,6 +487,68 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleListNiagaraUserParamete
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetStringField(TEXT("system_path"), SystemPath);
     ResultObj->SetArrayField(TEXT("parameters"), ParamArray);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+
+TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCreateNiagaraEmitter(const TSharedPtr<FJsonObject>& Params)
+{
+    FString EmitterName;
+    if (!Params->TryGetStringField(TEXT("name"), EmitterName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+    }
+
+    FString FolderPath = TEXT("/Game/FX/Emitters");
+    Params->TryGetStringField(TEXT("path"), FolderPath);
+
+    bool bAddDefaultModules = true;
+    Params->TryGetBoolField(TEXT("add_default_modules"), bAddDefaultModules);
+
+    FString PackageName = FolderPath / EmitterName;
+    PackageName = UPackageTools::SanitizePackageName(PackageName);
+
+    UPackage* Package = CreatePackage(*PackageName);
+    if (!Package)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for emitter"));
+    }
+
+    UNiagaraEmitterFactoryNew* Factory = NewObject<UNiagaraEmitterFactoryNew>();
+
+    // OJO: NO llamamos a Factory->ConfigureProperties() -- esa funcion abre
+    // SNewEmitterDialog, un modal de Slate que bloquea esperando input humano
+    // en el editor. Como esto corre headless via MCP, saltarlo es correcto:
+    // el constructor de UNiagaraEmitterFactoryNew ya deja EmitterToCopy=nullptr
+    // y bUseInheritance=false, que es exactamente la rama "crear emitter vacio"
+    // de FactoryCreateNew. Solo pisamos el flag que si queremos controlar:
+    Factory->EmitterToCopy = nullptr;
+    Factory->bUseInheritance = false;
+    Factory->bAddDefaultModulesAndRenderersToEmptyEmitter = bAddDefaultModules;
+
+    UNiagaraEmitter* NewEmitter = Cast<UNiagaraEmitter>(Factory->FactoryCreateNew(
+        UNiagaraEmitter::StaticClass(), Package, FName(*EmitterName), RF_Standalone | RF_Public, nullptr, GWarn));
+
+    if (!NewEmitter)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create Niagara emitter asset"));
+    }
+
+    NewEmitter->PreEditChange(nullptr);
+    NewEmitter->PostEditChange();
+    NewEmitter->MarkPackageDirty();
+    FAssetRegistryModule::AssetCreated(NewEmitter);
+
+    FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    bool bSaved = UPackage::SavePackage(Package, NewEmitter, *PackageFileName, SaveArgs);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("emitter_path"), NewEmitter->GetPathName());
+    ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
+    ResultObj->SetBoolField(TEXT("default_modules_added"), bAddDefaultModules);
     ResultObj->SetBoolField(TEXT("success"), true);
     return ResultObj;
 }

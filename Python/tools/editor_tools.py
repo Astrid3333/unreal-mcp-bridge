@@ -666,7 +666,89 @@ def register_editor_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {'success': False, 'message': error_msg}
     logger.info('Editor tools registered successfully')
-    ACTIONS = {'get_actors_in_level': _get_actors_in_level, 'find_actors_by_name': _find_actors_by_name, 'spawn_actor': _spawn_actor, 'delete_actor': _delete_actor, 'set_actor_transform': _set_actor_transform, 'get_actor_properties': _get_actor_properties, 'set_actor_property': _set_actor_property, 'focus_viewport': focus_viewport, 'take_screenshot': _take_screenshot, 'spawn_blueprint_actor': _spawn_blueprint_actor, 'spawn_foliage_instances': _spawn_foliage_instances, 'set_actor_material': _set_actor_material, 'get_actor_material': _get_actor_material, 'create_dynamic_material_instance': _create_dynamic_material_instance, 'set_material_scalar_parameter': _set_material_scalar_parameter, 'set_material_vector_parameter': _set_material_vector_parameter, 'create_material': _create_material, 'duplicate_actor': _duplicate_actor, 'get_actor_bounds': _get_actor_bounds, 'attach_actor_to_actor': _attach_actor_to_actor}
+    def _get_material_properties(ctx: Context, material_path: str) -> Dict[str, Any]:
+        """Read blend mode, shading model, and whether a material is a Material Instance."""
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'material_path': material_path}
+            response = unreal.send_command('get_material_properties', params)
+            return response or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error getting material properties: {e}'}
+
+    def _set_material_blend_mode(ctx: Context, material_path: str, blend_mode: str) -> Dict[str, Any]:
+        """Set blend mode on a base UMaterial and save it to disk."""
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'material_path': material_path, 'blend_mode': blend_mode}
+            response = unreal.send_command('set_material_blend_mode', params)
+            return response or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error setting material blend mode: {e}'}
+
+    def _create_moss_stone_material(ctx: Context, name: str, path: str='/Game/Materials', stone_color: List[float]=None, moss_color: List[float]=None, roughness: float=0.8, moss_amount: float=0.4, noise_scale: float=20.0, assign_to_actor: str='', slot_index: int=0) -> Dict[str, Any]:
+        """Create a procedural stone+moss Material (noise-driven, no external textures) and save it to disk."""
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'name': name, 'path': path, 'roughness': roughness, 'moss_amount': moss_amount, 'noise_scale': noise_scale}
+            if stone_color is not None:
+                params['stone_color'] = stone_color
+            if moss_color is not None:
+                params['moss_color'] = moss_color
+            if assign_to_actor:
+                params['assign_to_actor'] = assign_to_actor
+                params['slot_index'] = slot_index
+            response = unreal.send_command('create_moss_stone_material', params)
+            return response or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error creating moss stone material: {e}'}
+
+    def _import_texture(ctx: Context, source_path: str, name: str = '', path: str = '/Game/Textures', srgb: bool = True) -> Dict[str, Any]:
+        """Import a local image file (png/jpg/tga/exr) as a UTexture2D."""
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'source_path': source_path, 'path': path, 'srgb': srgb}
+            if name:
+                params['name'] = name
+            response = unreal.send_command('import_texture', params)
+            return response or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error importing texture: {e}'}
+
+    def _create_pbr_material(ctx: Context, name: str, path: str = '/Game/Materials',
+                              base_color_texture: str = '', normal_texture: str = '',
+                              roughness_texture: str = '', metallic_texture: str = '',
+                              ao_texture: str = '', assign_to_actor: str = '', slot_index: int = 0) -> Dict[str, Any]:
+        """Build a PBR material wiring up to 5 already-imported textures to their correct pins."""
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {
+                'name': name, 'path': path,
+                'base_color_texture': base_color_texture, 'normal_texture': normal_texture,
+                'roughness_texture': roughness_texture, 'metallic_texture': metallic_texture,
+                'ao_texture': ao_texture, 'assign_to_actor': assign_to_actor, 'slot_index': slot_index,
+            }
+            response = unreal.send_command('create_pbr_material', params)
+            return response or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error creating PBR material: {e}'}
+
+    ACTIONS = {'get_actors_in_level': _get_actors_in_level, 'find_actors_by_name': _find_actors_by_name, 'spawn_actor': _spawn_actor, 'delete_actor': _delete_actor, 'set_actor_transform': _set_actor_transform, 'get_actor_properties': _get_actor_properties, 'set_actor_property': _set_actor_property, 'focus_viewport': focus_viewport, 'take_screenshot': _take_screenshot, 'spawn_blueprint_actor': _spawn_blueprint_actor, 'spawn_foliage_instances': _spawn_foliage_instances, 'set_actor_material': _set_actor_material, 'get_actor_material': _get_actor_material, 'create_dynamic_material_instance': _create_dynamic_material_instance, 'set_material_scalar_parameter': _set_material_scalar_parameter, 'set_material_vector_parameter': _set_material_vector_parameter, 'create_material': _create_material, 'duplicate_actor': _duplicate_actor, 'get_actor_bounds': _get_actor_bounds, 'attach_actor_to_actor': _attach_actor_to_actor, 'get_material_properties': _get_material_properties, 'set_material_blend_mode': _set_material_blend_mode, 'create_moss_stone_material': _create_moss_stone_material, 'import_texture': _import_texture, 'create_pbr_material': _create_pbr_material}
 
     @mcp.tool()
     def unreal_actor(ctx: Context, action: str, params: Dict[str, Any]={}) -> Any:
@@ -694,6 +776,9 @@ def register_editor_tools(mcp: FastMCP):
       - set_material_scalar_parameter(actor_name, parameter_name, value, slot_index): Set a scalar (float) parameter on a Material Instance, e.g. roughness, metallic, emissive strength.
       - set_material_vector_parameter(actor_name, parameter_name, r, g, b, a, slot_index): Set a vector/color parameter on a Material Instance, e.g. base color tint, emissive color.
       - create_material(name, path, base_color, roughness, metallic, assign_to_actor, slot_index): Create a new Material asset with editable parameters, save it to disk, and optionally assign it to an actor.
+      - get_material_properties(material_path): Read blend mode, shading model, and whether it's a Material Instance.
+      - set_material_blend_mode(material_path, blend_mode): Set blend mode ('opaque'|'masked'|'translucent'|'additive'|'modulate'|'alphacomposite') on a base UMaterial and save to disk.
+      - create_moss_stone_material(name, path, stone_color, moss_color, roughness, moss_amount, noise_scale, assign_to_actor, slot_index): Create a procedural stone+moss Material (noise-driven, no textures) and save it to disk.
       - duplicate_actor(actor_name, new_name, location_offset): Clone an existing actor, copying its mesh, materials and other properties.
       - get_actor_bounds(actor_name): Get the world-space bounding box of an actor (origin and extent).
       - attach_actor_to_actor(actor_name, parent_actor_name, socket_name, attachment_rule): Attach (parent) one actor to another, optionally at a specific socket.

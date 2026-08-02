@@ -261,7 +261,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 # Initialize server
 mcp = FastMCP(
     "UnrealMCP",
-    description="Unreal Engine integration via Model Context Protocol",
+    instructions="Unreal Engine integration via Model Context Protocol",
     lifespan=server_lifespan
 )
 
@@ -276,6 +276,7 @@ from tools.umg_tools import register_umg_tools
 from tools.audio_tools import register_audio_tools
 from tools.niagara_tools import register_niagara_tools
 from tools.sequencer_tools import register_sequencer_tools
+from tools.component_tools import register_component_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -288,6 +289,7 @@ register_umg_tools(mcp)
 register_audio_tools(mcp)
 register_niagara_tools(mcp)
 register_sequencer_tools(mcp)
+register_component_tools(mcp)
 
 @mcp.prompt()
 def info():

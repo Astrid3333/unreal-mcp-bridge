@@ -18,6 +18,7 @@
 #include "Commands/UnrealMCPSequencerCommands.h"
 #include "Commands/UnrealMCPLandscapeCommands.h"
 #include "Commands/UnrealMCPAICommands.h"
+#include "Commands/UnrealMCPComponentCommands.h"
 #include "UnrealMCPBridge.generated.h"
 
 class FMCPServerRunnable;
@@ -71,4 +72,5 @@ private:
 	TSharedPtr<FUnrealMCPSequencerCommands> SequencerCommands;
     TSharedPtr<FUnrealMCPLandscapeCommands> LandscapeCommands;
     TSharedPtr<FUnrealMCPAICommands> AICommands;
+    TSharedPtr<FUnrealMCPComponentCommands> ComponentCommands;
 }; 

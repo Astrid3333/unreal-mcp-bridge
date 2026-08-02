@@ -22,6 +22,7 @@ _NIAGARA_ACTIONS = {
     "deactivate_niagara_component": "deactivate_niagara_component(actor_name): Deactivate a Niagara component's effect.",
     "add_niagara_user_parameter": "add_niagara_user_parameter(system_path, parameter_name, parameter_type): Add a User-exposed parameter (float/vector/color) to a NiagaraSystem asset.",
     "list_niagara_user_parameters": "list_niagara_user_parameters(system_path): List the User-exposed parameters already on a NiagaraSystem asset.",
+    "create_niagara_emitter": "create_niagara_emitter(name, path, add_default_modules): Create a new NiagaraEmitter asset from scratch (default: spawn rate + velocity + color-over-life modules included).",
 }
 
 
