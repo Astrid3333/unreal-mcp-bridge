@@ -66,6 +66,7 @@
 #include "Commands/UnrealMCPMaterialNodeCommands.h"
 #include "Commands/UnrealMCPViewportCommands.h"
 #include "Commands/UnrealMCPRenderingCommands.h"
+#include "Commands/UnrealMCPFoliageCommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -87,6 +88,7 @@ UUnrealMCPBridge::UUnrealMCPBridge()
     MaterialNodeCommands = MakeShared<FUnrealMCPMaterialNodeCommands>();
     ViewportCommands = MakeShared<FUnrealMCPViewportCommands>();
     RenderingCommands = MakeShared<FUnrealMCPRenderingCommands>();
+    FoliageCommands = MakeShared<FUnrealMCPFoliageCommands>();
 }
 
 UUnrealMCPBridge::~UUnrealMCPBridge()
@@ -105,6 +107,7 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
     MaterialNodeCommands.Reset();
     ViewportCommands.Reset();
     RenderingCommands.Reset();
+    FoliageCommands.Reset();
 }
 
 // Initialize subsystem
@@ -392,6 +395,13 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_cvar"))
             {
                 ResultJson = RenderingCommands->HandleCommand(CommandType, Params);
+            }
+            else if (CommandType == TEXT("create_foliage_type") ||
+                     CommandType == TEXT("add_foliage_instances") ||
+                     CommandType == TEXT("remove_foliage_instances") ||
+                     CommandType == TEXT("list_foliage_types"))
+            {
+                ResultJson = FoliageCommands->HandleCommand(CommandType, Params);
             }
             else if (CommandType == TEXT("get_navmesh_info") ||
                      CommandType == TEXT("build_navigation") ||

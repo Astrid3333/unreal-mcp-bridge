@@ -15,6 +15,8 @@ private:
     TSharedPtr<FJsonObject> HandleListComponents(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetComponentProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleBatchGetComponentProperties(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleBatchSetComponentProperties(const TSharedPtr<FJsonObject>& Params);
 
     UActorComponent* FindComponentByName(AActor* Actor, const FString& ComponentName);
 

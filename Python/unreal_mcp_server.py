@@ -280,6 +280,7 @@ from tools.component_tools import register_component_tools
 from tools.material_node_tools import register_material_node_tools
 from tools.viewport_tools import register_viewport_tools
 from tools.rendering_tools import register_rendering_tools
+from tools.foliage_tools import register_foliage_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -296,6 +297,7 @@ register_component_tools(mcp)
 register_material_node_tools(mcp)
 register_viewport_tools(mcp)
 register_rendering_tools(mcp)
+register_foliage_tools(mcp)
 
 @mcp.prompt()
 def info():

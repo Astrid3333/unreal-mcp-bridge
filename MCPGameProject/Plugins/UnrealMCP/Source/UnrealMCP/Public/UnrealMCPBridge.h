@@ -22,6 +22,7 @@
 #include "Commands/UnrealMCPMaterialNodeCommands.h"
 #include "Commands/UnrealMCPViewportCommands.h"
 #include "Commands/UnrealMCPRenderingCommands.h"
+#include "Commands/UnrealMCPFoliageCommands.h"
 #include "UnrealMCPBridge.generated.h"
 
 class FMCPServerRunnable;
@@ -79,4 +80,5 @@ private:
     TSharedPtr<FUnrealMCPMaterialNodeCommands> MaterialNodeCommands;
     TSharedPtr<FUnrealMCPViewportCommands> ViewportCommands;
     TSharedPtr<FUnrealMCPRenderingCommands> RenderingCommands;
+    TSharedPtr<FUnrealMCPFoliageCommands> FoliageCommands;
 }; 

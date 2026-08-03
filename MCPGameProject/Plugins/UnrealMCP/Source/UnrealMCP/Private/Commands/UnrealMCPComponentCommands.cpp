@@ -1,4 +1,6 @@
 #include "Commands/UnrealMCPComponentCommands.h"
+#include "EngineUtils.h"
+#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "Components/ActorComponent.h"
 #include "Editor.h"
@@ -103,6 +105,42 @@ TSharedPtr<FJsonValue> FUnrealMCPComponentCommands::PropertyToJson(FProperty* Pr
     if (FIntProperty* P = CastField<FIntProperty>(Property))
         return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
 
+    if (FInt64Property* P = CastField<FInt64Property>(Property))
+        return MakeShareable(new FJsonValueNumber((double)P->GetPropertyValue(ValuePtr)));
+
+    if (FUInt32Property* P = CastField<FUInt32Property>(Property))
+        return MakeShareable(new FJsonValueNumber((double)P->GetPropertyValue(ValuePtr)));
+
+    if (FUInt64Property* P = CastField<FUInt64Property>(Property))
+        return MakeShareable(new FJsonValueNumber((double)P->GetPropertyValue(ValuePtr)));
+
+    if (FInt16Property* P = CastField<FInt16Property>(Property))
+        return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
+
+    if (FUInt16Property* P = CastField<FUInt16Property>(Property))
+        return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
+
+    if (FInt8Property* P = CastField<FInt8Property>(Property))
+        return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
+
+    if (FInt64Property* P = CastField<FInt64Property>(Property))
+        return MakeShareable(new FJsonValueNumber((double)P->GetPropertyValue(ValuePtr)));
+
+    if (FUInt32Property* P = CastField<FUInt32Property>(Property))
+        return MakeShareable(new FJsonValueNumber((double)P->GetPropertyValue(ValuePtr)));
+
+    if (FUInt64Property* P = CastField<FUInt64Property>(Property))
+        return MakeShareable(new FJsonValueNumber((double)P->GetPropertyValue(ValuePtr)));
+
+    if (FInt16Property* P = CastField<FInt16Property>(Property))
+        return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
+
+    if (FUInt16Property* P = CastField<FUInt16Property>(Property))
+        return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
+
+    if (FInt8Property* P = CastField<FInt8Property>(Property))
+        return MakeShareable(new FJsonValueNumber(P->GetPropertyValue(ValuePtr)));
+
     if (FByteProperty* P = CastField<FByteProperty>(Property))
     {
         if (UEnum* Enum = P->GetIntPropertyEnum())
@@ -157,7 +195,15 @@ TSharedPtr<FJsonValue> FUnrealMCPComponentCommands::PropertyToJson(FProperty* Pr
             TArray<TSharedPtr<FJsonValue>> Arr = { MakeShareable(new FJsonValueNumber(C->R)), MakeShareable(new FJsonValueNumber(C->G)), MakeShareable(new FJsonValueNumber(C->B)), MakeShareable(new FJsonValueNumber(C->A)) };
             return MakeShareable(new FJsonValueArray(Arr));
         }
-        return MakeShareable(new FJsonValueString(FString::Printf(TEXT("<struct:%s, usar property_path anidado>"), *StructName)));
+        // Fallback genérico: cualquier otro struct se serializa como objeto JSON {campo: valor}, recursivo.
+        TSharedPtr<FJsonObject> StructJson = MakeShareable(new FJsonObject);
+        for (TFieldIterator<FProperty> It(P->Struct); It; ++It)
+        {
+            FProperty* SubProp = *It;
+            const void* SubValuePtr = SubProp->ContainerPtrToValuePtr<void>(ValuePtr);
+            StructJson->SetField(SubProp->GetName(), PropertyToJson(SubProp, SubValuePtr));
+        }
+        return MakeShareable(new FJsonValueObject(StructJson));
     }
 
     if (FObjectProperty* P = CastField<FObjectProperty>(Property))
@@ -191,6 +237,68 @@ bool FUnrealMCPComponentCommands::JsonToProperty(FProperty* Property, void* Valu
         P->SetPropertyValue(ValuePtr, (int32)JsonValue->AsNumber());
         return true;
     }
+    if (FInt64Property* P = CastField<FInt64Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (int64)JsonValue->AsNumber());
+        return true;
+    }
+    if (FUInt32Property* P = CastField<FUInt32Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (uint32)JsonValue->AsNumber());
+        return true;
+    }
+    if (FUInt64Property* P = CastField<FUInt64Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (uint64)JsonValue->AsNumber());
+        return true;
+    }
+    if (FInt16Property* P = CastField<FInt16Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (int16)JsonValue->AsNumber());
+        return true;
+    }
+    if (FUInt16Property* P = CastField<FUInt16Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (uint16)JsonValue->AsNumber());
+        return true;
+    }
+    if (FInt8Property* P = CastField<FInt8Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (int8)JsonValue->AsNumber());
+        return true;
+    }
+
+    if (FInt64Property* P = CastField<FInt64Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (int64)JsonValue->AsNumber());
+        return true;
+    }
+    if (FUInt32Property* P = CastField<FUInt32Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (uint32)JsonValue->AsNumber());
+        return true;
+    }
+    if (FUInt64Property* P = CastField<FUInt64Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (uint64)JsonValue->AsNumber());
+        return true;
+    }
+    if (FInt16Property* P = CastField<FInt16Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (int16)JsonValue->AsNumber());
+        return true;
+    }
+    if (FUInt16Property* P = CastField<FUInt16Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (uint16)JsonValue->AsNumber());
+        return true;
+    }
+    if (FInt8Property* P = CastField<FInt8Property>(Property))
+    {
+        P->SetPropertyValue(ValuePtr, (int8)JsonValue->AsNumber());
+        return true;
+    }
+
     if (FByteProperty* P = CastField<FByteProperty>(Property))
     {
         if (UEnum* Enum = P->GetIntPropertyEnum())
@@ -263,8 +371,86 @@ bool FUnrealMCPComponentCommands::JsonToProperty(FProperty* Property, void* Valu
             *C = FColor((uint8)(*Arr)[0]->AsNumber(), (uint8)(*Arr)[1]->AsNumber(), (uint8)(*Arr)[2]->AsNumber(), A);
             return true;
         }
-        OutError = FString::Printf(TEXT("Struct '%s' no soportado directamente, usá property_path anidado (ej: 'LightColor.R')"), *StructName);
-        return false;
+        // Fallback genérico: aceptar un objeto JSON {campo: valor} y escribir cada subcampo recursivamente.
+        const TSharedPtr<FJsonObject>* StructObj;
+        if (!JsonValue->TryGetObject(StructObj))
+        {
+            OutError = FString::Printf(TEXT("Struct '%s' no soportado: pasá un objeto JSON {campo: valor} o usá property_path anidado"), *StructName);
+            return false;
+        }
+        for (const auto& Pair : (*StructObj)->Values)
+        {
+            FProperty* SubProp = P->Struct->FindPropertyByName(FName(*Pair.Key));
+            if (!SubProp)
+            {
+                OutError = FString::Printf(TEXT("Campo '%s' no existe en struct '%s'"), *Pair.Key, *StructName);
+                return false;
+            }
+            void* SubValuePtr = SubProp->ContainerPtrToValuePtr<void>(ValuePtr);
+            if (!JsonToProperty(SubProp, SubValuePtr, Pair.Value, OutError))
+                return false;
+        }
+        return true;
+    }
+
+    if (FObjectProperty* P = CastField<FObjectProperty>(Property))
+    {
+        FString ObjPath = JsonValue->AsString();
+        if (ObjPath.IsEmpty() || ObjPath == TEXT("None"))
+        {
+            P->SetPropertyValue(ValuePtr, nullptr);
+            return true;
+        }
+        UObject* Obj = StaticLoadObject(P->PropertyClass, nullptr, *ObjPath);
+        if (!Obj && GWorld)
+        {
+            // Fallback: buscar por nombre simple de actor en el nivel actual
+            for (TActorIterator<AActor> It(GWorld); It; ++It)
+            {
+                if (It->GetName() == ObjPath && It->IsA(P->PropertyClass))
+                {
+                    Obj = *It;
+                    break;
+                }
+            }
+        }
+        if (!Obj)
+        {
+            OutError = FString::Printf(TEXT("No se encontró objeto '%s' de clase '%s'"), *ObjPath, *P->PropertyClass->GetName());
+            return false;
+        }
+        P->SetPropertyValue(ValuePtr, Obj);
+        return true;
+    }
+
+    if (FObjectProperty* P = CastField<FObjectProperty>(Property))
+    {
+        FString ObjPath = JsonValue->AsString();
+        if (ObjPath.IsEmpty() || ObjPath == TEXT("None"))
+        {
+            P->SetPropertyValue(ValuePtr, nullptr);
+            return true;
+        }
+        UObject* Obj = StaticLoadObject(P->PropertyClass, nullptr, *ObjPath);
+        if (!Obj && GWorld)
+        {
+            // Fallback: buscar por nombre simple de actor en el nivel actual
+            for (TActorIterator<AActor> It(GWorld); It; ++It)
+            {
+                if (It->GetName() == ObjPath && It->IsA(P->PropertyClass))
+                {
+                    Obj = *It;
+                    break;
+                }
+            }
+        }
+        if (!Obj)
+        {
+            OutError = FString::Printf(TEXT("No se encontró objeto '%s' de clase '%s'"), *ObjPath, *P->PropertyClass->GetName());
+            return false;
+        }
+        P->SetPropertyValue(ValuePtr, Obj);
+        return true;
     }
 
     OutError = TEXT("Tipo de propiedad no soportado para escritura");
@@ -400,6 +586,182 @@ TSharedPtr<FJsonObject> FUnrealMCPComponentCommands::HandleSetComponentProperty(
     return Result;
 }
 
+TSharedPtr<FJsonObject> FUnrealMCPComponentCommands::HandleBatchGetComponentProperties(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+    const TArray<TSharedPtr<FJsonValue>>* Items;
+    if (!Params->TryGetArrayField(TEXT("items"), Items))
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("message"), TEXT("Falta el campo 'items' (array)"));
+        return Result;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ResultsArr;
+    for (const TSharedPtr<FJsonValue>& ItemVal : *Items)
+    {
+        TSharedPtr<FJsonObject> ItemResult = MakeShareable(new FJsonObject);
+        const TSharedPtr<FJsonObject>* ItemObj;
+        if (!ItemVal->TryGetObject(ItemObj))
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), TEXT("Item inválido, se esperaba un objeto"));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        FString ActorName, ComponentName, PropertyPath;
+        (*ItemObj)->TryGetStringField(TEXT("actor_name"), ActorName);
+        (*ItemObj)->TryGetStringField(TEXT("component_name"), ComponentName);
+        (*ItemObj)->TryGetStringField(TEXT("property_path"), PropertyPath);
+        ItemResult->SetStringField(TEXT("actor_name"), ActorName);
+        ItemResult->SetStringField(TEXT("component_name"), ComponentName);
+        ItemResult->SetStringField(TEXT("property_path"), PropertyPath);
+
+        AActor* Actor = nullptr;
+        for (TActorIterator<AActor> It(GWorld); It; ++It)
+        {
+            if (It->GetName() == ActorName) { Actor = *It; break; }
+        }
+        if (!Actor)
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Actor '%s' no encontrado"), *ActorName));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        UActorComponent* Comp = FindComponentByName(Actor, ComponentName);
+        if (!Comp)
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Componente '%s' no encontrado en '%s'"), *ComponentName, *ActorName));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        FProperty* Prop = nullptr;
+        void* ValuePtr = nullptr;
+        FString Err;
+        if (!ResolvePropertyPath(Comp, PropertyPath, Prop, ValuePtr, Err))
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), Err);
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        ItemResult->SetBoolField(TEXT("success"), true);
+        ItemResult->SetField(TEXT("value"), PropertyToJson(Prop, ValuePtr));
+        ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+    }
+
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetArrayField(TEXT("results"), ResultsArr);
+    return Result;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPComponentCommands::HandleBatchSetComponentProperties(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+    const TArray<TSharedPtr<FJsonValue>>* Items;
+    if (!Params->TryGetArrayField(TEXT("items"), Items))
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("message"), TEXT("Falta el campo 'items' (array)"));
+        return Result;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ResultsArr;
+    TSet<UActorComponent*> TouchedComponents;
+
+    for (const TSharedPtr<FJsonValue>& ItemVal : *Items)
+    {
+        TSharedPtr<FJsonObject> ItemResult = MakeShareable(new FJsonObject);
+        const TSharedPtr<FJsonObject>* ItemObj;
+        if (!ItemVal->TryGetObject(ItemObj))
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), TEXT("Item inválido, se esperaba un objeto"));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        FString ActorName, ComponentName, PropertyPath;
+        (*ItemObj)->TryGetStringField(TEXT("actor_name"), ActorName);
+        (*ItemObj)->TryGetStringField(TEXT("component_name"), ComponentName);
+        (*ItemObj)->TryGetStringField(TEXT("property_path"), PropertyPath);
+        TSharedPtr<FJsonValue> ValueJson = (*ItemObj)->TryGetField(TEXT("value"));
+
+        ItemResult->SetStringField(TEXT("actor_name"), ActorName);
+        ItemResult->SetStringField(TEXT("component_name"), ComponentName);
+        ItemResult->SetStringField(TEXT("property_path"), PropertyPath);
+
+        if (!ValueJson.IsValid())
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), TEXT("Falta el campo 'value'"));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        AActor* Actor = nullptr;
+        for (TActorIterator<AActor> It(GWorld); It; ++It)
+        {
+            if (It->GetName() == ActorName) { Actor = *It; break; }
+        }
+        if (!Actor)
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Actor '%s' no encontrado"), *ActorName));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        UActorComponent* Comp = FindComponentByName(Actor, ComponentName);
+        if (!Comp)
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), FString::Printf(TEXT("Componente '%s' no encontrado en '%s'"), *ComponentName, *ActorName));
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        FProperty* Prop = nullptr;
+        void* ValuePtr = nullptr;
+        FString Err;
+        if (!ResolvePropertyPath(Comp, PropertyPath, Prop, ValuePtr, Err))
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), Err);
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        Comp->Modify();
+        if (!JsonToProperty(Prop, ValuePtr, ValueJson, Err))
+        {
+            ItemResult->SetBoolField(TEXT("success"), false);
+            ItemResult->SetStringField(TEXT("error"), Err);
+            ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+            continue;
+        }
+
+        TouchedComponents.Add(Comp);
+        ItemResult->SetBoolField(TEXT("success"), true);
+        ResultsArr.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+    }
+
+    for (UActorComponent* Comp : TouchedComponents)
+    {
+        Comp->MarkPackageDirty();
+    }
+
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetArrayField(TEXT("results"), ResultsArr);
+    return Result;
+}
+
 TSharedPtr<FJsonObject> FUnrealMCPComponentCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     if (CommandType == TEXT("list_components"))
@@ -408,6 +770,10 @@ TSharedPtr<FJsonObject> FUnrealMCPComponentCommands::HandleCommand(const FString
         return HandleGetComponentProperty(Params);
     if (CommandType == TEXT("set_actor_component_property"))
         return HandleSetComponentProperty(Params);
+    if (CommandType == TEXT("batch_get_component_properties"))
+        return HandleBatchGetComponentProperties(Params);
+    if (CommandType == TEXT("batch_set_component_properties"))
+        return HandleBatchSetComponentProperties(Params);
 
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     Result->SetBoolField(TEXT("success"), false);
