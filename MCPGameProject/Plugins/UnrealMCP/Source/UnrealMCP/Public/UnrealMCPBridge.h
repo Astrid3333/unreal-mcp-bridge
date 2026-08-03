@@ -19,6 +19,9 @@
 #include "Commands/UnrealMCPLandscapeCommands.h"
 #include "Commands/UnrealMCPAICommands.h"
 #include "Commands/UnrealMCPComponentCommands.h"
+#include "Commands/UnrealMCPMaterialNodeCommands.h"
+#include "Commands/UnrealMCPViewportCommands.h"
+#include "Commands/UnrealMCPRenderingCommands.h"
 #include "UnrealMCPBridge.generated.h"
 
 class FMCPServerRunnable;
@@ -73,4 +76,7 @@ private:
     TSharedPtr<FUnrealMCPLandscapeCommands> LandscapeCommands;
     TSharedPtr<FUnrealMCPAICommands> AICommands;
     TSharedPtr<FUnrealMCPComponentCommands> ComponentCommands;
+    TSharedPtr<FUnrealMCPMaterialNodeCommands> MaterialNodeCommands;
+    TSharedPtr<FUnrealMCPViewportCommands> ViewportCommands;
+    TSharedPtr<FUnrealMCPRenderingCommands> RenderingCommands;
 }; 

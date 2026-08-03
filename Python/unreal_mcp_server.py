@@ -277,6 +277,9 @@ from tools.audio_tools import register_audio_tools
 from tools.niagara_tools import register_niagara_tools
 from tools.sequencer_tools import register_sequencer_tools
 from tools.component_tools import register_component_tools
+from tools.material_node_tools import register_material_node_tools
+from tools.viewport_tools import register_viewport_tools
+from tools.rendering_tools import register_rendering_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -290,6 +293,9 @@ register_audio_tools(mcp)
 register_niagara_tools(mcp)
 register_sequencer_tools(mcp)
 register_component_tools(mcp)
+register_material_node_tools(mcp)
+register_viewport_tools(mcp)
+register_rendering_tools(mcp)
 
 @mcp.prompt()
 def info():

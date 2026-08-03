@@ -63,6 +63,9 @@
 #include "Commands/UnrealMCPLandscapeCommands.h"
 #include "Commands/UnrealMCPAICommands.h"
 #include "Commands/UnrealMCPComponentCommands.h"
+#include "Commands/UnrealMCPMaterialNodeCommands.h"
+#include "Commands/UnrealMCPViewportCommands.h"
+#include "Commands/UnrealMCPRenderingCommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -81,6 +84,9 @@ UUnrealMCPBridge::UUnrealMCPBridge()
     LandscapeCommands = MakeShared<FUnrealMCPLandscapeCommands>();
     AICommands = MakeShared<FUnrealMCPAICommands>();
     ComponentCommands = MakeShared<FUnrealMCPComponentCommands>();
+    MaterialNodeCommands = MakeShared<FUnrealMCPMaterialNodeCommands>();
+    ViewportCommands = MakeShared<FUnrealMCPViewportCommands>();
+    RenderingCommands = MakeShared<FUnrealMCPRenderingCommands>();
 }
 
 UUnrealMCPBridge::~UUnrealMCPBridge()
@@ -96,6 +102,9 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
     LandscapeCommands.Reset();
     AICommands.Reset();
     ComponentCommands.Reset();
+    MaterialNodeCommands.Reset();
+    ViewportCommands.Reset();
+    RenderingCommands.Reset();
 }
 
 // Initialize subsystem
@@ -363,6 +372,26 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_actor_component_property"))
             {
                 ResultJson = ComponentCommands->HandleCommand(CommandType, Params);
+            }
+            else if (CommandType == TEXT("add_material_expression") ||
+                     CommandType == TEXT("connect_material_expressions") ||
+                     CommandType == TEXT("set_material_output") ||
+                     CommandType == TEXT("list_material_expressions") ||
+                     CommandType == TEXT("set_material_expression_constant"))
+            {
+                ResultJson = MaterialNodeCommands->HandleCommand(CommandType, Params);
+            }
+            else if (CommandType == TEXT("get_viewport_camera_info") ||
+                     CommandType == TEXT("set_viewport_camera") ||
+                     CommandType == TEXT("set_viewport_fov") ||
+                     CommandType == TEXT("set_viewport_view_mode"))
+            {
+                ResultJson = ViewportCommands->HandleCommand(CommandType, Params);
+            }
+            else if (CommandType == TEXT("get_cvar") ||
+                     CommandType == TEXT("set_cvar"))
+            {
+                ResultJson = RenderingCommands->HandleCommand(CommandType, Params);
             }
             else if (CommandType == TEXT("get_navmesh_info") ||
                      CommandType == TEXT("build_navigation") ||
