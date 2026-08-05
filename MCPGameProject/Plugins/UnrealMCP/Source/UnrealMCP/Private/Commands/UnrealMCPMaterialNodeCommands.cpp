@@ -43,8 +43,13 @@
 // Mapa de nombres de expression_type -> UClass. Agregar aca cuando se
 // sume un tipo nuevo, y agregar el caso correspondiente en
 // SetExpressionInputPin() si el tipo tiene pines de entrada conectables.
+//
+// Vive a nivel de archivo (no local a ResolveExpressionClass) para que
+// list_available_expression_types pueda leerlo tambien via
+// GetExpressionTypeMap() -- introspeccion en vivo, una sola fuente de
+// verdad para "que tipos existen" en vez de mantener dos listas.
 // =====================================================================
-static UClass* ResolveExpressionClass(const FString& TypeName)
+static const TMap<FString, UClass*>& GetExpressionTypeMap()
 {
     static const TMap<FString, UClass*> EXPRESSION_TYPES = {
         { TEXT("Add"),                 UMaterialExpressionAdd::StaticClass() },
@@ -77,7 +82,12 @@ static UClass* ResolveExpressionClass(const FString& TypeName)
         { TEXT("ScalarParameter"),     UMaterialExpressionScalarParameter::StaticClass() },
         { TEXT("VectorParameter"),     UMaterialExpressionVectorParameter::StaticClass() },
     };
-    UClass* const* Found = EXPRESSION_TYPES.Find(TypeName);
+    return EXPRESSION_TYPES;
+}
+
+static UClass* ResolveExpressionClass(const FString& TypeName)
+{
+    UClass* const* Found = GetExpressionTypeMap().Find(TypeName);
     return Found ? *Found : nullptr;
 }
 
@@ -258,6 +268,8 @@ TSharedPtr<FJsonObject> FUnrealMCPMaterialNodeCommands::HandleCommand(const FStr
         return HandleListMaterialExpressions(Params);
     if (CommandType == TEXT("set_material_expression_constant"))
         return HandleSetMaterialExpressionConstant(Params);
+    if (CommandType == TEXT("list_available_expression_types"))
+        return HandleListAvailableExpressionTypes(Params);
 
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown material node command: %s"), *CommandType));
 }
@@ -483,6 +495,40 @@ TSharedPtr<FJsonObject> FUnrealMCPMaterialNodeCommands::HandleSetMaterialExpress
     Material->MarkPackageDirty();
 
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// =====================================================================
+// list_available_expression_types -- introspeccion en vivo del mapa
+// EXPRESSION_TYPES (via GetExpressionTypeMap()), el mismo que usa
+// CreateExpressionByType/ResolveExpressionClass. No hardcodea una lista
+// nueva del lado C++ ni del lado Python -- el objetivo es poder
+// verificar el vocabulario documentado en material_node_tools.md contra
+// el plugin compilado real. No devuelve la tabla de target_pin por tipo
+// (eso sigue viviendo solo en SetExpressionInputPin() y en el doc,
+// porque duplicarla ahi requeriria una segunda tabla de datos separada
+// del switch actual) -- solo confirma que expression_type existen.
+// =====================================================================
+TSharedPtr<FJsonObject> FUnrealMCPMaterialNodeCommands::HandleListAvailableExpressionTypes(const TSharedPtr<FJsonObject>& Params)
+{
+    TArray<FString> Names;
+    GetExpressionTypeMap().GetKeys(Names);
+    Names.Sort();
+
+    TArray<TSharedPtr<FJsonValue>> TypeArray;
+    for (const FString& Name : Names)
+    {
+        UClass* Class = GetExpressionTypeMap()[Name];
+        TSharedPtr<FJsonObject> TypeObj = MakeShared<FJsonObject>();
+        TypeObj->SetStringField(TEXT("expression_type"), Name);
+        TypeObj->SetStringField(TEXT("class_name"), Class ? Class->GetName() : TEXT("Unknown"));
+        TypeArray.Add(MakeShared<FJsonValueObject>(TypeObj));
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetArrayField(TEXT("expression_types"), TypeArray);
+    ResultObj->SetNumberField(TEXT("count"), TypeArray.Num());
     ResultObj->SetBoolField(TEXT("success"), true);
     return ResultObj;
 }

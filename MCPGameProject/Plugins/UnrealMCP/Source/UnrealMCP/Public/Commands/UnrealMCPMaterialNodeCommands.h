@@ -30,6 +30,11 @@ class UMaterialExpression;
 // su caso correspondiente en SetExpressionInputPin() para que sus pines de
 // entrada sean conectables. Los tipos ya cubiertos alcanzan para la mayoria
 // de grafos proceduales (aritmetica, lerp, clamp, noise, texturas, coords).
+//
+// INTROSPECCION: list_available_expression_types expone en vivo las keys
+// del mapa EXPRESSION_TYPES (ver GetExpressionTypeMap() en el .cpp) para
+// poder verificar el vocabulario documentado en material_node_tools.md
+// contra el binario compilado real, sin mantener una segunda lista a mano.
 // =====================================================================
 class UNREALMCP_API FUnrealMCPMaterialNodeCommands
 {
@@ -42,6 +47,7 @@ private:
     TSharedPtr<FJsonObject> HandleSetMaterialOutput(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListMaterialExpressions(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetMaterialExpressionConstant(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleListAvailableExpressionTypes(const TSharedPtr<FJsonObject>& Params);
 
     // Crea la UMaterialExpression correspondiente a expression_type (ver
     // EXPRESSION_TYPES en el .cpp para la lista de nombres soportados).

@@ -6,8 +6,9 @@
 /**
  * Handler class for Niagara-related MCP commands.
  * Covers: spawning NiagaraSystem actors in the level, setting exposed
- * user parameters (float/vector/color), and activating/deactivating
- * the effect at runtime.
+ * user parameters (float/vector/color), activating/deactivating the
+ * effect at runtime, and pulsing a User-exposed bool to signal a
+ * custom event to a running system's scripts.
  */
 class UNREALMCP_API FUnrealMCPNiagaraCommands
 {
@@ -36,4 +37,11 @@ private:
 
     // Asset creation
     TSharedPtr<FJsonObject> HandleCreateNiagaraEmitter(const TSharedPtr<FJsonObject>& Params);
+
+    // Trigger a custom event on a running Niagara component (implemented as a
+    // pulse of a User-exposed boolean parameter User.<event_name>, since there
+    // is no simple external "Custom Event" invocation API for a running
+    // system). The parameter must already exist on the system as User Exposed
+    // Bool for this to have any effect.
+    TSharedPtr<FJsonObject> HandleTriggerNiagaraEvent(const TSharedPtr<FJsonObject>& Params);
 };

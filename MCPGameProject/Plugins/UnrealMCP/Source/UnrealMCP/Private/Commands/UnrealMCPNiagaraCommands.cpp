@@ -59,6 +59,10 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCommand(const FString& 
     {
         return HandleCreateNiagaraEmitter(Params);
     }
+    else if (CommandType == TEXT("trigger_niagara_event"))
+    {
+        return HandleTriggerNiagaraEvent(Params);
+    }
 
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown niagara command: %s"), *CommandType));
 }
@@ -549,6 +553,58 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCreateNiagaraEmitter(co
     ResultObj->SetStringField(TEXT("emitter_path"), NewEmitter->GetPathName());
     ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
     ResultObj->SetBoolField(TEXT("default_modules_added"), bAddDefaultModules);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// =====================================================================
+// trigger_niagara_event -- pulsa un parametro User.<event_name> booleano
+// en un componente Niagara corriendo. No existe una API simple de
+// "Custom Event" inter-emisor invocable desde afuera del sistema; el
+// patron real que usa Niagara para triggers externos es exponer un
+// parametro User bool y que los scripts del sistema (Emitter Update /
+// Particle Spawn, leyendolo via "Get Bool Parameter" y opcionalmente
+// reseteandolo a false adentro del propio grafo, o un modulo Scratch
+// Pad que lo consuma) reaccionen a ese pulso.
+//
+// OJO: add_niagara_user_parameter hoy solo soporta float/vector/color
+// -- el parametro bool tiene que existir de antemano en el sistema
+// (creado a mano en el editor, ej "User.Explode"), este comando no lo
+// crea. Si el nombre no existe como User Exposed Bool, SetVariableBool
+// es un no-op silencioso (mismo comportamiento que SetVariableFloat en
+// set_niagara_float_parameter).
+// =====================================================================
+TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleTriggerNiagaraEvent(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'actor_name' parameter"));
+    }
+    FString EventName;
+    if (!Params->TryGetStringField(TEXT("event_name"), EventName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
+    }
+
+    ANiagaraActor* TargetActor = FindNiagaraActorByName(ActorName);
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("NiagaraActor not found: %s"), *ActorName));
+    }
+    UNiagaraComponent* NiagaraComp = TargetActor->GetNiagaraComponent();
+    if (!NiagaraComp)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("NiagaraActor has no NiagaraComponent"));
+    }
+
+    FString FullName = EventName.StartsWith(TEXT("User.")) ? EventName : (TEXT("User.") + EventName);
+    NiagaraComp->SetVariableBool(FName(*FullName), true);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("actor_name"), ActorName);
+    ResultObj->SetStringField(TEXT("parameter_name"), FullName);
+    ResultObj->SetBoolField(TEXT("value"), true);
     ResultObj->SetBoolField(TEXT("success"), true);
     return ResultObj;
 }

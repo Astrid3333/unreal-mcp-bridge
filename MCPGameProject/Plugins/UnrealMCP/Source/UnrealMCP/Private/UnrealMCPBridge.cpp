@@ -344,7 +344,8 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("deactivate_niagara_component") ||
                      CommandType == TEXT("add_niagara_user_parameter") ||
                      CommandType == TEXT("list_niagara_user_parameters") ||
-                     CommandType == TEXT("create_niagara_emitter"))
+                     CommandType == TEXT("create_niagara_emitter") ||
+                     CommandType == TEXT("trigger_niagara_event"))
             {
                 ResultJson = NiagaraCommands->HandleCommand(CommandType, Params);
             }
@@ -380,7 +381,8 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("connect_material_expressions") ||
                      CommandType == TEXT("set_material_output") ||
                      CommandType == TEXT("list_material_expressions") ||
-                     CommandType == TEXT("set_material_expression_constant"))
+                     CommandType == TEXT("set_material_expression_constant") ||
+                     CommandType == TEXT("list_available_expression_types"))
             {
                 ResultJson = MaterialNodeCommands->HandleCommand(CommandType, Params);
             }

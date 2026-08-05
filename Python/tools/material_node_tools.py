@@ -17,7 +17,8 @@ def register_material_node_tools(mcp: FastMCP):
           AppendVector, Distance, Fresnel, Panner, Time, TextureCoordinate,
           TextureSample, TransformPosition, WorldPosition, VertexNormalWS, Noise,
           Constant, Constant2Vector, Constant3Vector, Constant4Vector,
-          ScalarParameter, VectorParameter.
+          ScalarParameter, VectorParameter. Usa list_available_expression_types
+          para verificar en vivo la lista completa contra el bridge real.
         node_id: nombre unico que vos elegis para referenciar este nodo despues
           en connect_material_expressions / set_material_output.
         """
@@ -97,12 +98,33 @@ def register_material_node_tools(mcp: FastMCP):
         except Exception as e:
             return {'success': False, 'message': f'Error setting material expression constant: {e}'}
 
+    def _list_available_expression_types(ctx: Context) -> Dict[str, Any]:
+        """Lista en vivo los expression_type soportados por add_material_expression.
+
+        Introspeccion directa contra el mapa EXPRESSION_TYPES del bridge (el
+        mismo que usa CreateExpressionByType/ResolveExpressionClass) — no es
+        una lista hardcodeada del lado Python, asi que sirve para verificar
+        el vocabulario documentado en material_node_tools.md contra el
+        estado real del plugin compilado. No incluye la tabla de target_pin
+        por tipo (esa sigue viviendo solo en el codigo de SetExpressionInputPin
+        y en el doc); esto solo confirma que tipos existen.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            return unreal.send_command('list_available_expression_types', {}) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error listing available expression types: {e}'}
+
     ACTIONS = {
         'add_material_expression': _add_material_expression,
         'connect_material_expressions': _connect_material_expressions,
         'set_material_output': _set_material_output,
         'list_material_expressions': _list_material_expressions,
         'set_material_expression_constant': _set_material_expression_constant,
+        'list_available_expression_types': _list_available_expression_types,
     }
 
     @mcp.tool()
@@ -116,6 +138,7 @@ def register_material_node_tools(mcp: FastMCP):
           - set_material_output(material_path, output_pin, node_id, output_index)
           - list_material_expressions(material_path)
           - set_material_expression_constant(material_path, node_id, value)
+          - list_available_expression_types(): introspeccion en vivo de expression_type soportados
         """
         if action not in ACTIONS:
             return {'success': False, 'message': f"Acción desconocida '{action}'. Disponibles: {list(ACTIONS.keys())}"}

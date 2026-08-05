@@ -23,6 +23,7 @@ _NIAGARA_ACTIONS = {
     "add_niagara_user_parameter": "add_niagara_user_parameter(system_path, parameter_name, parameter_type): Add a User-exposed parameter (float/vector/color) to a NiagaraSystem asset.",
     "list_niagara_user_parameters": "list_niagara_user_parameters(system_path): List the User-exposed parameters already on a NiagaraSystem asset.",
     "create_niagara_emitter": "create_niagara_emitter(name, path, add_default_modules): Create a new NiagaraEmitter asset from scratch (default: spawn rate + velocity + color-over-life modules included).",
+    "trigger_niagara_event": "trigger_niagara_event(actor_name, event_name): Pulse a User-exposed boolean parameter (User.<event_name>) on a spawned Niagara component to signal a custom event to the system's scripts. The parameter must exist on the system as a User Exposed Bool.",
 }
 
 
