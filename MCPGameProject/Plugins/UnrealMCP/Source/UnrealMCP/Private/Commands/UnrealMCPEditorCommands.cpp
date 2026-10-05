@@ -8,6 +8,10 @@
 #include "Engine/Engine.h"
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Editor.h"
+#include "Editor/Transactor.h"
+#include "FileHelpers.h"
+#include "Misc/PackageName.h"
+#include "Containers/Ticker.h"
 #include "EditorViewportClient.h"
 #include "LevelEditorViewport.h"
 #include "ImageUtils.h"
@@ -66,6 +70,15 @@
 
 FUnrealMCPEditorCommands::FUnrealMCPEditorCommands()
 {
+}
+
+namespace
+{
+    // Estado de operaciones diferidas de editor (save/open) ejecutadas en
+    // FTSTicker fuera del tick del mundo (ver HandleSaveLevel/HandleOpenLevel).
+    FString GLMCP_PendingKind;   // "save" | "open" | vacio
+    FString GLMCP_PendingTarget;
+    FString GLMCP_LastOpError;
 }
 
 TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -201,6 +214,34 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     else if (CommandType == TEXT("execute_python"))
     {
         return HandleExecutePython(Params);
+    }
+    else if (CommandType == TEXT("get_editor_state"))
+    {
+        return HandleGetEditorState(Params);
+    }
+    else if (CommandType == TEXT("get_selection"))
+    {
+        return HandleGetSelection(Params);
+    }
+    else if (CommandType == TEXT("set_selection"))
+    {
+        return HandleSetSelection(Params);
+    }
+    else if (CommandType == TEXT("editor_undo"))
+    {
+        return HandleUndo(Params);
+    }
+    else if (CommandType == TEXT("editor_redo"))
+    {
+        return HandleRedo(Params);
+    }
+    else if (CommandType == TEXT("save_current_level"))
+    {
+        return HandleSaveLevel(Params);
+    }
+    else if (CommandType == TEXT("open_level"))
+    {
+        return HandleOpenLevel(Params);
     }
     else if (CommandType == TEXT("play_start"))
     {
@@ -395,6 +436,16 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
     }
     if (NewActor)
     {
+        // Modify() graba el actor al transaction buffer y marca su paquete como
+        // dirty. Con World Partition el actor vive en un paquete externo
+        // (__ExternalActors__/...) asi que ademas marcamos el paquete del mapa,
+        // que es el que consulta get_editor_state.
+        NewActor->Modify();
+        if (World)
+        {
+            World->MarkPackageDirty();
+        }
+
         // Set scale (since SpawnActor only takes location and rotation)
         FTransform Transform = NewActor->GetTransform();
         Transform.SetScale3D(Scale);
@@ -437,7 +488,17 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleDeleteActor(const TShare
         {
             // Store actor info before deletion for the response
             TSharedPtr<FJsonObject> ActorInfo = FUnrealMCPCommonUtils::ActorToJsonObject(Actor);
-            
+
+            // Modify() marca su paquete (con World Partition es el externo del
+            // actor); ademas marcamos el paquete del mapa, que es el que
+            // consulta get_editor_state. Borrar actores deja el mapa sin
+            // guardar, igual que en el editor.
+            Actor->Modify();
+            if (GWorld)
+            {
+                GWorld->MarkPackageDirty();
+            }
+
             // Delete the actor
             Actor->Destroy();
             
@@ -3224,3 +3285,308 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCallActorFunction(const 
     for (FProperty* P : Props) { P->DestroyValue(P->ContainerPtrToValuePtr<void>(Args, 0)); }
     return R;
 }
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetEditorState(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+
+    UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+    if (EditorWorld)
+    {
+        R->SetStringField(TEXT("map_name"), EditorWorld->GetOutermost()->GetName());
+        R->SetBoolField(TEXT("dirty"), EditorWorld->GetOutermost()->IsDirty());
+        TArray<AActor*> AllActors;
+        UGameplayStatics::GetAllActorsOfClass(EditorWorld, AActor::StaticClass(), AllActors);
+        R->SetNumberField(TEXT("actor_count"), AllActors.Num());
+    }
+    else
+    {
+        R->SetStringField(TEXT("map_name"), TEXT(""));
+        R->SetBoolField(TEXT("dirty"), false);
+        R->SetNumberField(TEXT("actor_count"), 0);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> SelArr;
+    if (USelection* Sel = GEditor->GetSelectedActors())
+    {
+        for (int32 i = 0; i < Sel->Num(); ++i)
+        {
+            if (AActor* A = Cast<AActor>(Sel->GetSelectedObject(i))) { SelArr.Add(MakeShared<FJsonValueString>(A->GetName())); }
+        }
+    }
+    R->SetArrayField(TEXT("selection"), SelArr);
+
+    R->SetBoolField(TEXT("can_undo"), GEditor->Trans && GEditor->Trans->CanUndo());
+    R->SetBoolField(TEXT("can_redo"), GEditor->Trans && GEditor->Trans->CanRedo());
+
+    R->SetBoolField(TEXT("playing"), GEditor->IsPlayingSessionInEditor());
+    R->SetBoolField(TEXT("request_queued"), GEditor->IsPlaySessionRequestQueued());
+    UWorld* PlayWorld = GEditor->PlayWorld;
+    R->SetStringField(TEXT("play_world"), PlayWorld ? PlayWorld->GetName() : TEXT(""));
+    FString WorldType;
+    if (PlayWorld)
+    {
+        switch (PlayWorld->WorldType)
+        {
+        case EWorldType::Editor: WorldType = TEXT("EDITOR"); break;
+        case EWorldType::Game: WorldType = TEXT("GAME"); break;
+        case EWorldType::PIE: WorldType = TEXT("PIE"); break;
+        default: WorldType = TEXT("OTHER"); break;
+        }
+    }
+    R->SetStringField(TEXT("play_world_type"), WorldType);
+    R->SetStringField(TEXT("pending_kind"), GLMCP_PendingKind);
+    R->SetStringField(TEXT("pending_target"), GLMCP_PendingTarget);
+    R->SetStringField(TEXT("last_op_error"), GLMCP_LastOpError);
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetSelection(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    TArray<TSharedPtr<FJsonValue>> SelArr;
+    if (USelection* Sel = GEditor->GetSelectedActors())
+    {
+        for (int32 i = 0; i < Sel->Num(); ++i)
+        {
+            if (AActor* A = Cast<AActor>(Sel->GetSelectedObject(i))) { SelArr.Add(MakeShared<FJsonValueString>(A->GetName())); }
+        }
+    }
+    R->SetArrayField(TEXT("selection"), SelArr);
+    R->SetNumberField(TEXT("count"), (int32)SelArr.Num());
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetSelection(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+    const TArray<TSharedPtr<FJsonValue>>* Names = nullptr;
+    if (!Params || !Params->TryGetArrayField(TEXT("names"), Names))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Parametro requerido: names (array de nombres de actor)"));
+    }
+
+    TMap<FString, AActor*> WorldActors;
+    if (UWorld* EditorWorld = GEditor->GetEditorWorldContext().World())
+    {
+        for (TActorIterator<AActor> It(EditorWorld); It; ++It) { WorldActors.Add(It->GetName(), *It); }
+    }
+
+    USelection* Sel = GEditor->GetSelectedActors();
+    if (!Sel) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor->GetSelectedActors() nulo")); }
+    Sel->DeselectAll();
+
+    TArray<TSharedPtr<FJsonValue>> Selected;
+    TArray<TSharedPtr<FJsonValue>> NotFound;
+    for (const TSharedPtr<FJsonValue>& V : *Names)
+    {
+        FString Name;
+        if (V->TryGetString(Name))
+        {
+            if (AActor** Found = WorldActors.Find(Name)) { Sel->Select(*Found); Selected.Add(MakeShared<FJsonValueString>(Name)); }
+            else { NotFound.Add(MakeShared<FJsonValueString>(Name)); }
+        }
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetArrayField(TEXT("selected"), Selected);
+    R->SetArrayField(TEXT("not_found"), NotFound);
+    R->SetNumberField(TEXT("count"), (int32)Selected.Num());
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleUndo(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+    if (!GEditor->Trans) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Transactor (GEditor->Trans) no disponible")); }
+    if (!GEditor->Trans->CanUndo())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Nada que deshacer (undo buffer vacio)"));
+    }
+    const bool bUndone = GEditor->UndoTransaction();
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetBoolField(TEXT("undone"), bUndone);
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleRedo(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+    if (!GEditor->Trans) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Transactor (GEditor->Trans) no disponible")); }
+    if (!GEditor->Trans->CanRedo())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Nada que rehacer (redo buffer vacio)"));
+    }
+    const bool bRedone = GEditor->RedoTransaction();
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetBoolField(TEXT("redone"), bRedone);
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSaveLevel(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+    bool bContent = false;
+    if (Params) { Params->TryGetBoolField(TEXT("content"), bContent); }
+    FString Path;
+    if (Params) { Params->TryGetStringField(TEXT("path"), Path); }
+    Path = Path.TrimStartAndEnd();
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("No hay mundo de editor activo")); }
+    const FString Pkg = World->GetOutermost()->GetName();
+
+    // Validacion sincronica (sin dialogos): decidir el filename destino.
+    FString Filename;
+    if (!Path.IsEmpty())
+    {
+        if (!FPackageName::TryConvertLongPackageNameToFilename(Path, Filename, FPackageName::GetMapPackageExtension()))
+        {
+            return FUnrealMCPCommonUtils::CreateErrorResponse(
+                FString::Printf(TEXT("path invalido (se espera un paquete /Game/...): %s"), *Path));
+        }
+    }
+    else if (Pkg.StartsWith(TEXT("/Game/")))
+    {
+        if (!FPackageName::TryConvertLongPackageNameToFilename(Pkg, Filename, FPackageName::GetMapPackageExtension()))
+        {
+            return FUnrealMCPCommonUtils::CreateErrorResponse(
+                FString::Printf(TEXT("No se pudo convertir %s a filename"), *Pkg));
+        }
+    }
+    else
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("Mapa todavia sin guardar (%s): pasa path=\"/Game/Maps/Nombre\" para guardarlo"), *Pkg));
+    }
+
+    // Paquete destino esperado: si SaveMap internamente duplica el mundo
+    // (bPackageExists en FileHelpers.cpp), el mundo original conserva el nombre
+    // viejo y hay que recargar el mapa guardado, igual que hace el editor
+    // (LevelEditorActions.cpp: SaveLevelAs -> LoadMap(SavedFilename)).
+    const FString TargetPkg = !Path.IsEmpty() ? Path : Pkg;
+
+    // Se ejecuta en el proximo tick de FTSTicker (fuera de UWorld::Tick):
+    // un save largo no debe correr dentro de un grupo de tick del puente.
+    GLMCP_PendingKind = TEXT("save");
+    GLMCP_PendingTarget = Filename;
+    GLMCP_LastOpError.Empty();
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+        [Filename, TargetPkg, bContent](float) -> bool
+        {
+            bool bSaved = false;
+            bool bContentSaved = true;
+            if (GEditor)
+            {
+                if (UWorld* W = GEditor->GetEditorWorldContext().World())
+                {
+                    bSaved = FEditorFileUtils::SaveMap(W, Filename);
+                    if (bSaved)
+                    {
+                        FAssetRegistryModule::AssetCreated(W);
+                        if (bContent) { bContentSaved = FEditorFileUtils::SaveDirtyPackages(false, false, true); }
+
+                        UWorld* CurW = GEditor->GetEditorWorldContext().World();
+                        if (CurW && CurW->GetOutermost()->GetName() != TargetPkg)
+                        {
+                            if (!FEditorFileUtils::LoadMap(Filename))
+                            {
+                                GLMCP_LastOpError = FString::Printf(
+                                    TEXT("Mapa guardado en %s pero el reload al nuevo asset fallo"), *TargetPkg);
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                GLMCP_LastOpError = TEXT("GEditor desaparecio durante el save diferido");
+            }
+            if (!bSaved && GLMCP_LastOpError.IsEmpty())
+            {
+                GLMCP_LastOpError = FString::Printf(TEXT("SaveMap devolvio false: %s"), *Filename);
+            }
+            else if (!bContentSaved && GLMCP_LastOpError.IsEmpty())
+            {
+                GLMCP_LastOpError = TEXT("SaveDirtyPackages(content) devolvio false");
+            }
+            GLMCP_PendingKind.Empty();
+            GLMCP_PendingTarget.Empty();
+            return false; // one-shot
+        }));
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetBoolField(TEXT("deferred"), true);
+    R->SetStringField(TEXT("path"), Filename);
+    R->SetBoolField(TEXT("content"), bContent);
+    R->SetStringField(TEXT("message"),
+        TEXT("Save diferido: consulta editor_get_state hasta que pending_kind este vacio"));
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleOpenLevel(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!GEditor) { return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("GEditor no disponible")); }
+    FString Path;
+    if (!Params || !Params->TryGetStringField(TEXT("path"), Path) || Path.TrimStartAndEnd().IsEmpty())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Parametro requerido: path (ej. /Game/Maps/Untitled)"));
+    }
+    Path = Path.TrimStartAndEnd();
+    bool bDiscard = false;
+    if (Params) { Params->TryGetBoolField(TEXT("discard_changes"), bDiscard); }
+
+    UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+    if (!bDiscard && EditorWorld && EditorWorld->GetOutermost()->IsDirty())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("Hay cambios sin guardar en %s; guarda primero (editor_save_level) o pasa discard_changes=true"),
+                *EditorWorld->GetOutermost()->GetName()));
+    }
+
+    // Se ejecuta en el proximo tick de FTSTicker (fuera de UWorld::Tick):
+    // LoadMap destruye el mundo; dentro de un grupo de tick del puente
+    // provoca el assertion !LevelList.Contains(TickTaskLevel) y SIGSEGV.
+    GLMCP_PendingKind = TEXT("open");
+    GLMCP_PendingTarget = Path;
+    GLMCP_LastOpError.Empty();
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+        [Path](float) -> bool
+        {
+            bool bLoaded = false;
+            if (GEditor)
+            {
+                bLoaded = FEditorFileUtils::LoadMap(Path, false, false);
+            }
+            else
+            {
+                GLMCP_LastOpError = TEXT("GEditor desaparecio durante el load diferido");
+            }
+            if (!bLoaded && GLMCP_LastOpError.IsEmpty())
+            {
+                GLMCP_LastOpError = FString::Printf(TEXT("LoadMap devolvio false: %s"), *Path);
+            }
+            GLMCP_PendingKind.Empty();
+            GLMCP_PendingTarget.Empty();
+            return false; // one-shot
+        }));
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetBoolField(TEXT("deferred"), true);
+    R->SetStringField(TEXT("path"), Path);
+    R->SetStringField(TEXT("message"),
+        TEXT("Open diferido: consulta editor_get_state hasta que pending_kind este vacio"));
+    return R;
+}
+

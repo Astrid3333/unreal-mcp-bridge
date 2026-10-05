@@ -286,6 +286,13 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("apply_force") ||
                      CommandType == TEXT("execute_console_command") ||
                      CommandType == TEXT("execute_python") ||
+                     CommandType == TEXT("get_editor_state") ||
+                     CommandType == TEXT("get_selection") ||
+                     CommandType == TEXT("set_selection") ||
+                     CommandType == TEXT("editor_undo") ||
+                     CommandType == TEXT("editor_redo") ||
+                     CommandType == TEXT("save_current_level") ||
+                     CommandType == TEXT("open_level") ||
                      CommandType == TEXT("play_start") ||
                      CommandType == TEXT("play_stop") ||
                      CommandType == TEXT("play_status") ||

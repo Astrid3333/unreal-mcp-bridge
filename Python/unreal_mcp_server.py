@@ -318,6 +318,7 @@ from tools.sim_tools import register_sim_tools
 from tools.data_tools import register_data_tools
 from tools.game_tools import register_game_tools
 from tools.py_tools import register_python_tools
+from tools.editor_state_tools import register_editor_state_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -340,6 +341,7 @@ register_sim_tools(mcp)
 register_data_tools(mcp)
 register_game_tools(mcp)
 register_python_tools(mcp)
+register_editor_state_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -577,6 +579,13 @@ def info():
       file|statement|evaluate, scope=public|private) y python_exec_file
       (path de un .py del disco). Acceso completo al modulo `unreal`;
       scope='public' persiste variables entre llamadas.
+
+    - `unreal_editor` (editor_state_tools.py) — estado y control del
+      editor: editor_get_state (mapa, dirty, seleccion, can_undo/can_redo,
+      sesion de juego), editor_get_selection / editor_set_selection,
+      editor_undo / editor_redo (transacciones via GEditor->Trans),
+      editor_save_level(path=..., content=...) y editor_open_level(path=...,
+      discard_changes=...).
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`
