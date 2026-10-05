@@ -275,6 +275,7 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnActor(const TShared
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.Name = *ActorName;
+    SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
 
     if (ActorType == TEXT("StaticMeshActor"))
     {
@@ -605,6 +606,7 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnBlueprintActor(cons
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.Name = *ActorName;
+    SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
 
     AActor* NewActor = World->SpawnActor<AActor>(Blueprint->GeneratedClass, SpawnTransform, SpawnParams);
     if (NewActor)

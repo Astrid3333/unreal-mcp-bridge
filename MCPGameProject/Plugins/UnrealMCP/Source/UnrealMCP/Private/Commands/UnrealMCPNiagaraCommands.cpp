@@ -143,6 +143,7 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleSpawnNiagaraSystem(cons
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.Name = *ActorName;
+    SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
     ANiagaraActor* NewActor = World->SpawnActor<ANiagaraActor>(ANiagaraActor::StaticClass(), Location, Rotation, SpawnParams);
     if (!NewActor)
     {

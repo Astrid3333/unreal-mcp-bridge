@@ -6,7 +6,10 @@ set_cvar) en tools de alto nivel para luces, volumenes de post-proceso,
 camara y calidad de render. Todo verificado en vivo contra Unreal Editor 5.3.
 """
 import logging
-from typing import Any, Dict, List, Optional
+import os
+import time
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 from mcp.server.fastmcp import FastMCP, Context
 
@@ -45,10 +48,49 @@ def register_vfx_tools(mcp: FastMCP):
 
     def _spawn(ctx: Context, name: str, actor_type: str, location: List[float],
                rotation: Optional[List[float]] = None) -> Dict[str, Any]:
+        taken = _name_taken(ctx, name)
+        if taken:
+            return {"success": False,
+                    "message": (f"Ya existe un actor con el nombre '{name}'. "
+                                "Reusar nombres provoca un crash fatal en UE "
+                                "(Cannot generate unique name); usa uno distinto.")}
         params: Dict[str, Any] = {"name": name, "type": actor_type, "location": location or [0.0, 0.0, 0.0]}
         if rotation:
             params["rotation"] = rotation
         return _send(ctx, "spawn_actor", params)
+
+    def _name_taken(ctx: Context, name: str) -> bool:
+        res = _send(ctx, "find_actors_by_name", {"pattern": name})
+        actors = res.get("actors", []) if isinstance(res, dict) else []
+        return any(isinstance(a, dict) and a.get("name") == name for a in actors)
+
+    def _unique(base: str) -> str:
+        return f"{base}_{os.getpid()}_{int(time.time())}{uuid.uuid4().hex[:4]}"
+
+    def _delete(ctx: Context, name: str) -> Any:
+        if _name_taken(ctx, name):
+            return _send(ctx, "delete_actor", {"name": name})
+        return {"success": True, "message": f"'{name}' no existe, nada que borrar"}
+
+    def _read_prop(ctx: Context, actor_name: str, component_hint: str,
+                   property_path: str) -> Tuple[bool, Any]:
+        comps = _send(ctx, "list_components", {"actor_name": actor_name})
+        names = [c.get("name", "") for c in comps.get("components", [])] if isinstance(comps, dict) else []
+        candidate = next((n for n in names if component_hint.lower() in n.lower()), None)
+        if not candidate:
+            return False, f"sin componente que contenga '{component_hint}' (hay: {names})"
+        res = _send(ctx, "get_component_property", {"actor_name": actor_name,
+                                                    "component_name": candidate,
+                                                    "property_path": property_path})
+        if isinstance(res, dict) and res.get("success"):
+            return True, res.get("value")
+        return False, res.get("message", res) if isinstance(res, dict) else str(res)
+
+    def _num_ok(value: Any, target: float, tolerance: float = 0.5) -> bool:
+        try:
+            return abs(float(value) - float(target)) <= tolerance
+        except (TypeError, ValueError):
+            return False
 
     # ------------------------------------------------------------------ luces
     def create_point_light(ctx: Context, name: str, location: List[float] = [0.0, 0.0, 300.0],
@@ -282,7 +324,13 @@ def register_vfx_tools(mcp: FastMCP):
 
     # ----------------------------------------------------------------- camara
     def set_camera_fov(ctx: Context, camera_name: str, fov_degrees: float) -> Dict[str, Any]:
-        """Cambia el FOV (grados) de un CameraActor. 90 = normal, 30 = teleobjetivo, 120 = gran angular."""
+        """Cambia el FOV (grados) de un CameraActor. 90 = normal, 30 = teleobjetivo, 120 = gran angular.
+
+        Usa CameraComponent.FieldOfView (UE5); en UE4 cae a FOVAngle.
+        """
+        applied = _set_props(ctx, camera_name, {"FieldOfView": float(fov_degrees)})
+        if applied["applied"]:
+            return applied
         return _set_props(ctx, camera_name, {"FOVAngle": float(fov_degrees)})
 
     def set_camera_depth_of_field(ctx: Context, camera_name: str,
@@ -325,6 +373,268 @@ def register_vfx_tools(mcp: FastMCP):
         """Calidad de sombras (sg.ShadowQuality). 0=baja, 3=alta."""
         return _send(ctx, "set_cvar", {"cvar_name": "sg.ShadowQuality", "value": str(int(level))})
 
+    # ------------------------------------------------- introspeccion / presets
+    PPV_CANDIDATES = [
+        "Settings.BloomIntensity", "Settings.BloomThreshold", "Settings.BloomIntensityOverride",
+        "Settings.AutoExposureBias", "Settings.AutoExposureMinBrightness",
+        "Settings.AutoExposureMaxBrightness", "Settings.MotionBlurAmount", "Settings.MotionBlurMax",
+        "Settings.DepthOfFieldFocalDistance", "Settings.DepthOfFieldFstop",
+        "Settings.DepthOfFieldDepthBlurAmount", "Settings.VignetteIntensity",
+        "Settings.FilmGrainIntensity", "Settings.ChromaticAberrationStartOffset",
+        "Settings.LensFlareIntensity", "Settings.AmbientCubemapIntensity",
+        "Settings.AmbientCubemapTint", "Settings.ColorSaturation", "Settings.ColorContrast",
+        "Settings.ColorGamma", "Settings.ColorGain", "Settings.ColorOffset",
+        "Settings.ColorShadows", "Settings.ColorHighlights", "Settings.FringeIntensity",
+        "Settings.SceneColorFringeIntensity", "Settings.SceneFringeWidth",
+        "Settings.GlobalIlluminationBlend", "Settings.ReflectionsBlend",
+        "Settings.AOIntensity", "Settings.AORadiusMax", "Settings.AOType",
+        "Settings.AmbientOcclusionIntensity", "Settings.BloomMethod", "Settings.AutoExposureMethod",
+        "Settings.AntiAliasingMethod", "Settings.DepthOfFieldMethod",
+        "Settings.AmbientOcclusionType", "Settings.DynamicGlobalIlluminationMethod",
+        "Settings.ReflectionsMethod", "Settings.TranslucencyType", "Settings.ConvolutionBloomSize",
+        "Settings.MotionBlurTargetFPS", "Settings.BloomConvolutionTextureSize",
+        "Settings.dof.KernelSize", "Settings.fog.Amount", "Settings.fog.Strength",
+        "Settings.fog.Density", "Settings.fog.HDR", "Settings.fog.InscatteringLuminance",
+        "Settings.fog.InscatteringColorTint", "Settings.fog.Falloff", "Settings.fog.SkyNetContribution",
+        "Settings.fog.VolumetricFogScatteringDistribution", "Settings.fog.VolumetricFogExtinctionScale",
+        "Settings.fog.VolumetricFogDistance", "Settings.fog.VolumetricFogStartDistance",
+        "Settings.PathTracingMaxBounces", "Settings.PathTracingMaxSamples",
+        "Settings.PathTracingSamplesPerPixel", "Settings.PathTracingMaxRoughness",
+        "Settings.PathTracingLightingMode", "Settings.PathTracingRadianceCache",
+        "Settings.bOverride_OverrideFlatToneMapping",
+    ]
+    LIGHT_CANDIDATES = [
+        "Intensity", "LightColor", "AttenuationRadius", "bUseTemperature", "Temperature",
+        "bUseInverseSquaredFalloff", "FalloffExponent", "ShadowBias", "ShadowSlopeBias",
+        "ShadowResolutionScale", "ShadowBlurRadius", "bCastShadows", "bCastVolumetricShadow",
+        "bCastStaticShadows", "bCastDynamicShadows", "bAffectDynamicIndirectLighting",
+        "bAffectDistanceFieldLighting", "bUseRayTracedShadows", "bCastVolumetricShadow",
+        "SourceRadius", "SourceLength", "SoftSourceRadius", "bUseIESBrightness",
+        "IESBrightnessScale", "LightmassSettings.Intensity", "VolumetricScatteringIntensity",
+        "bEnabled", "bVisible", "Mobility", "IntensityScale", "BarnDoorAngle", "BarnDoorLength",
+        "bUseMenuShadowCasting", "bCastContactShadows", "ContactShadowLength",
+        "ContactShadowLengthInWorldSpace", "Transmission", "bTransmission", "bCastShadowsFromMovingBodies",
+    ]
+    CAMERA_CANDIDATES = [
+        "FieldOfView", "FOVAngle", "PostProcessSettings.BloomIntensity", "PostProcessSettings.BloomThreshold",
+        "PostProcessSettings.AutoExposureBias", "PostProcessSettings.VignetteIntensity",
+        "PostProcessSettings.FilmGrainIntensity", "PostProcessSettings.DepthOfFieldFocalDistance",
+        "PostProcessSettings.DepthOfFieldFstop", "PostProcessSettings.MotionBlurAmount",
+        "PostProcessSettings.ChromaticAberrationStartOffset", "PostProcessSettings.LensFlareIntensity",
+        "PostProcessSettings.bOverride_BloomIntensity", "PostProcessSettings.bOverride_AutoExposureBias",
+        "bConstrainAspectRatio", "AspectRatio", "bLockToHmd", "bUsePawnControlRotation",
+        "ProjectionMode", "OrthoWidth", "OrthoNearClipPlane", "OrthoFarClipPlane",
+        "bUseCustomNearPlane", "CustomNearPlaneZ",
+    ]
+    _MISSING_MARKERS = ("Property not found", "Struct field not found",
+                        "Component not found", "Invalid object")
+    _NO_SETTABLE_MARKERS = ("Unsupported struct type", "Unsupported nested struct type",
+                            "Unsupported property type")
+
+    def _probe_result(prop: str, applied: Dict[str, Any]) -> Tuple[str, str]:
+        """Clasifica un set de prueba: "settable", "not_settable" o "missing"."""
+        if applied.get("success"):
+            return "settable", "ok"
+        msg = str(applied.get("errors", {}).get(prop, applied.get("message", "")))
+        if any(m in msg for m in _MISSING_MARKERS):
+            return "missing", msg
+        if any(m in msg for m in _NO_SETTABLE_MARKERS):
+            return "not_settable", msg
+        return "settable", msg
+
+    def list_supported_settings(ctx: Context, target: str = "post_process") -> Dict[str, Any]:
+        """Descubre que propiedades de post-proceso/luces camara soporta esta version de UE.
+
+        Spawnea un actor desechable, intenta setear cada candidato con 0.0 y clasifica:
+          - settable: la propiedad existe y el setter la escribe (o pide otro formato,
+            ej. un vector → existe y es escribible con el formato correcto);
+          - not_settable: existe pero el setter del plugin no la soporta (Vector4, etc.);
+          - missing: la propiedad no existe en esta version de UE.
+        El actor de prueba se borra siempre.
+
+        Args:
+            target: "post_process" (PostProcessVolume), "light" (PointLight) o "camera" (CameraActor).
+        """
+        spec: Dict[str, Tuple[str, List[str]]] = {
+            "post_process": ("PostProcessVolume", PPV_CANDIDATES),
+            "light": ("PointLight", LIGHT_CANDIDATES),
+            "camera": ("CameraActor", CAMERA_CANDIDATES),
+        }
+        if target not in spec:
+            return {"success": False, "message": f"target desconocido: '{target}'. Usa {sorted(spec)}"}
+        actor_type, candidates = spec[target]
+        name = _unique(f"VFXPROBE_{target}")
+        spawn = _spawn(ctx, name, actor_type, [50000.0, 50000.0, 50000.0])
+        if isinstance(spawn, dict) and spawn.get("success") is False:
+            return {"success": False, "message": f"No pude crear el actor de prueba: {spawn.get('message')}"}
+        buckets: Dict[str, List[str]] = {"settable": [], "not_settable": [], "missing": []}
+        messages: Dict[str, str] = {}
+        try:
+            for prop in candidates:
+                state, msg = _probe_result(prop, _set_props(ctx, name, {prop: 0.0}))
+                buckets[state].append(prop)
+                if msg != "ok":
+                    messages[prop] = msg
+        finally:
+            cleanup = _delete(ctx, name)
+        return {
+            "success": True,
+            "target": target,
+            "actor_type": actor_type,
+            "settable": sorted(buckets["settable"]),
+            "supported": sorted(buckets["settable"]),
+            "exists_not_settable": sorted(buckets["not_settable"]),
+            "missing": sorted(buckets["missing"]),
+            "messages": messages,
+            "cleanup": cleanup,
+        }
+
+    PRESET_STEPS: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {
+        "night": [
+            ("set_bloom", {"intensity": 0.8, "threshold": 1.2}),
+            ("set_exposure", {"bias": -0.9}),
+            ("set_vignette", {"intensity": 0.6}),
+            ("set_film_grain", {"intensity": 0.18}),
+            ("set_chromatic_aberration", {"start_offset": 0.1}),
+        ],
+        "horror": [
+            ("set_bloom", {"intensity": 0.5, "threshold": 1.6}),
+            ("set_exposure", {"bias": -1.4}),
+            ("set_vignette", {"intensity": 1.0}),
+            ("set_film_grain", {"intensity": 0.35}),
+            ("set_motion_blur", {"amount": 0.2}),
+        ],
+        "sunset": [
+            ("set_bloom", {"intensity": 2.4, "threshold": 0.9}),
+            ("set_exposure", {"bias": 0.7}),
+            ("set_vignette", {"intensity": 0.35}),
+            ("set_chromatic_aberration", {"start_offset": 0.15}),
+            ("set_film_grain", {"intensity": 0.1}),
+        ],
+        "dream": [
+            ("set_bloom", {"intensity": 4.5, "threshold": 0.6}),
+            ("set_depth_of_field", {"focal_distance": 1800.0, "fstop": 1.8}),
+            ("set_motion_blur", {"amount": 0.8}),
+            ("set_vignette", {"intensity": 0.3}),
+            ("set_film_grain", {"intensity": 0.08}),
+        ],
+        "cinematic": [
+            ("set_bloom", {"intensity": 2.0, "threshold": 1.0}),
+            ("set_exposure", {"bias": 0.15}),
+            ("set_depth_of_field", {"focal_distance": 3000.0, "fstop": 4.0}),
+            ("set_motion_blur", {"amount": 0.4}),
+            ("set_vignette", {"intensity": 0.5}),
+            ("set_film_grain", {"intensity": 0.2}),
+        ],
+    }
+
+    def list_presets(ctx: Context) -> Dict[str, Any]:
+        """Lista los presets de look disponibles y sus pasos."""
+        return {"success": True, "presets": sorted(PRESET_STEPS),
+                "steps": {k: [a for a, _ in v] for k, v in PRESET_STEPS.items()}}
+
+    def apply_preset(ctx: Context, preset: str, volume_name: Optional[str] = None) -> Dict[str, Any]:
+        """Aplica un preset de look (bloom/exposicion/DOF/vignette/grano) a un PostProcessVolume.
+
+        Args:
+            preset: uno de los de list_presets ("night", "horror", "sunset", "dream", "cinematic").
+            volume_name: volumen destino. Si se omite usa (o crea) "VFX_PresetVolume" unbound.
+        """
+        if preset not in PRESET_STEPS:
+            return {"success": False, "message": f"Preset desconocido: '{preset}'. Usa {sorted(PRESET_STEPS)}"}
+        created = False
+        if not volume_name:
+            volume_name = "VFX_PresetVolume"
+        if not _name_taken(ctx, volume_name):
+            spawn = _spawn(ctx, volume_name, "PostProcessVolume", [0.0, 0.0, 0.0])
+            if isinstance(spawn, dict) and spawn.get("success") is False:
+                return {"success": False, "message": f"No pude crear '{volume_name}': {spawn.get('message')}"}
+            _set_props(ctx, volume_name, {"bEnabled": True, "bUnbound": True})
+            created = True
+        steps = []
+        all_ok = True
+        for action, kwargs in PRESET_STEPS[preset]:
+            try:
+                result = ACTIONS[action](ctx, volume_name=volume_name, **kwargs)
+            except Exception as exc:
+                result = {"success": False, "message": str(exc)}
+            ok = isinstance(result, dict) and bool(result.get("success"))
+            all_ok = all_ok and ok
+            steps.append({"action": action, "ok": ok,
+                          "detail": None if ok else (result.get("message") or result.get("errors"))})
+        return {"success": all_ok, "preset": preset, "volume": volume_name,
+                "created_volume": created, "steps": steps}
+
+    def selftest(ctx: Context) -> Dict[str, Any]:
+        """Autochequeo del puente VFX: conexion, luces, post-proceso, camara y cvars.
+
+        Crea actores con nombres unicos, verifica lectura de vuelta y limpia todo
+        al final (tambien si algo falla). Sirve para validar tras reiniciar UE.
+        """
+        checks: List[Dict[str, Any]] = []
+
+        def check(name: str, ok: Any, detail: Any = "") -> bool:
+            good = bool(ok)
+            stored = detail if (not good or isinstance(detail, str)) else ""
+            checks.append({"check": name, "ok": good, "detail": stored})
+            return good
+
+        ping = _send(ctx, "ping", {})
+        if not check("conexion", isinstance(ping, dict) and ping.get("message") == "pong", ping):
+            return {"success": False, "passed": 0, "failed": 1, "checks": checks,
+                    "message": "Sin conexion con Unreal Editor"}
+        cvar_before = _send(ctx, "get_cvar", {"cvar_name": "r.ScreenPercentage"})
+        prev_screen = cvar_before.get("value") if isinstance(cvar_before, dict) else None
+
+        light_name = _unique("VFXSELF_Light")
+        ppv_name = _unique("VFXSELF_PPV")
+        cam_name = _unique("VFXSELF_Cam")
+        try:
+            spawn = _spawn(ctx, light_name, "PointLight", [200.0, -400.0, 300.0])
+            if check("spawn_point_light", isinstance(spawn, dict) and spawn.get("success") is not False, spawn):
+                setr = _set_props(ctx, light_name, {"Intensity": 4321.0, "LightColor": [10, 200, 90, 255]})
+                check("set_light_props", setr["success"], setr["errors"] or setr["applied"])
+                ok, val = _read_prop(ctx, light_name, "LightComponent", "Intensity")
+                check("read_back_light_intensity", ok and _num_ok(val, 4321.0, 1.0), val)
+                ok, val = _read_prop(ctx, light_name, "LightComponent", "LightColor")
+                check("read_back_light_color", ok, val)
+
+            spawn = _spawn(ctx, ppv_name, "PostProcessVolume", [0.0, 0.0, 0.0])
+            if check("spawn_post_process_volume", isinstance(spawn, dict) and spawn.get("success") is not False, spawn):
+                _set_props(ctx, ppv_name, {"bEnabled": True, "bUnbound": True})
+                for action, kwargs in [("set_bloom", {"intensity": 2.0, "threshold": 1.0}),
+                                       ("set_exposure", {"bias": 0.2}),
+                                       ("set_vignette", {"intensity": 0.5}),
+                                       ("set_film_grain", {"intensity": 0.2}),
+                                       ("set_chromatic_aberration", {"start_offset": 0.1}),
+                                       ("set_lens_flare", {"intensity": 1.0}),
+                                       ("set_motion_blur", {"amount": 0.5}),
+                                       ("set_depth_of_field", {"focal_distance": 2000.0, "fstop": 2.8})]:
+                    r = ACTIONS[action](ctx, volume_name=ppv_name, **kwargs)
+                    check(f"ppv_{action}", isinstance(r, dict) and r.get("success"),
+                          r.get("errors") if isinstance(r, dict) else r)
+
+            spawn = _spawn(ctx, cam_name, "CameraActor", [0.0, 500.0, 200.0])
+            if check("spawn_camera", isinstance(spawn, dict) and spawn.get("success") is not False, spawn):
+                _set_props(ctx, cam_name, {"FieldOfView": 70.0})
+                ok, val = _read_prop(ctx, cam_name, "CameraComponent", "FieldOfView")
+                check("read_back_camera_fov", ok and _num_ok(val, 70.0, 0.5), val)
+
+            _send(ctx, "set_cvar", {"cvar_name": "r.ScreenPercentage", "value": "85"})
+            after = _send(ctx, "get_cvar", {"cvar_name": "r.ScreenPercentage"})
+            check("cvar_set_get", isinstance(after, dict) and str(after.get("value")) == "85",
+                  after.get("value") if isinstance(after, dict) else after)
+        finally:
+            for n in (light_name, ppv_name, cam_name):
+                _delete(ctx, n)
+            if prev_screen is not None:
+                _send(ctx, "set_cvar", {"cvar_name": "r.ScreenPercentage", "value": str(prev_screen)})
+
+        passed = sum(1 for c in checks if c["ok"])
+        failed = len(checks) - passed
+        return {"success": failed == 0, "passed": passed, "failed": failed,
+                "checks": checks, "restored_screen_percentage": prev_screen}
+
     ACTIONS = {
         'create_point_light': create_point_light,
         'create_spot_light': create_spot_light,
@@ -351,6 +661,10 @@ def register_vfx_tools(mcp: FastMCP):
         'set_post_process_quality': set_post_process_quality,
         'set_effects_quality': set_effects_quality,
         'set_shadow_quality': set_shadow_quality,
+        'list_supported_settings': list_supported_settings,
+        'list_presets': list_presets,
+        'apply_preset': apply_preset,
+        'selftest': selftest,
     }
 
     actions_doc = "\n      - ".join([""] + [f"{name}(...)" for name in ACTIONS])

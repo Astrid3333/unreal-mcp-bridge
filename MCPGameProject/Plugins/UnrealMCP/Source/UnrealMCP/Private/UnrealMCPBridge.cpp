@@ -435,9 +435,16 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
             if (ResultJson->HasField(TEXT("success")))
             {
                 bSuccess = ResultJson->GetBoolField(TEXT("success"));
-                if (!bSuccess && ResultJson->HasField(TEXT("error")))
+                if (!bSuccess)
                 {
-                    ErrorMessage = ResultJson->GetStringField(TEXT("error"));
+                    if (ResultJson->HasField(TEXT("error")))
+                    {
+                        ErrorMessage = ResultJson->GetStringField(TEXT("error"));
+                    }
+                    else if (ResultJson->HasField(TEXT("message")))
+                    {
+                        ErrorMessage = ResultJson->GetStringField(TEXT("message"));
+                    }
                 }
             }
             

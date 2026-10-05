@@ -347,6 +347,7 @@ TSharedPtr<FJsonObject> FUnrealMCPAudioCommands::HandleSpawnAmbientSound(const T
 
     FActorSpawnParameters SpawnParams;
     SpawnParams.Name = *ActorName;
+    SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
     AAmbientSound* NewActor = World->SpawnActor<AAmbientSound>(AAmbientSound::StaticClass(), Location, Rotation, SpawnParams);
     if (!NewActor)
     {
