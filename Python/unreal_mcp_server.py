@@ -282,6 +282,7 @@ from tools.viewport_tools import register_viewport_tools
 from tools.rendering_tools import register_rendering_tools
 from tools.foliage_tools import register_foliage_tools
 from tools.vfx_tools import register_vfx_tools
+from tools.sim_tools import register_sim_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -300,6 +301,7 @@ register_viewport_tools(mcp)
 register_rendering_tools(mcp)
 register_foliage_tools(mcp)
 register_vfx_tools(mcp)
+register_sim_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -512,6 +514,13 @@ def info():
 
     - `unreal_project` (project_tools.py) — configuracion de proyecto:
       create_input_mapping
+
+    - `unreal_sim` (sim_tools.py) — simulaciones cientificas (fisica, quimica,
+      biologia, espacial): list_models, create, step, run, get_state,
+      set_params, reset, delete, list, calc, to_unreal, update_unreal,
+      clear_unreal. Corre en Python sin Unreal; solo to_unreal/update_unreal/
+      clear_unreal tocan el editor. Flujo: list_models -> create -> run ->
+      get_state -> to_unreal -> update_unreal -> clear_unreal.
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`
