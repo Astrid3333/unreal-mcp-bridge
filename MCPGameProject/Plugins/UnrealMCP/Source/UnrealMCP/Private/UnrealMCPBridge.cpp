@@ -283,7 +283,14 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("line_trace") ||
                      CommandType == TEXT("get_gravity") ||
                      CommandType == TEXT("set_gravity") ||
-                     CommandType == TEXT("apply_force"))
+                     CommandType == TEXT("apply_force") ||
+                     CommandType == TEXT("execute_console_command") ||
+                     CommandType == TEXT("play_start") ||
+                     CommandType == TEXT("play_stop") ||
+                     CommandType == TEXT("play_status") ||
+                     CommandType == TEXT("simulate_input") ||
+                     CommandType == TEXT("list_functions") ||
+                     CommandType == TEXT("call_actor_function"))
             {
                 ResultJson = EditorCommands->HandleCommand(CommandType, Params);
             }

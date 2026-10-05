@@ -7,6 +7,7 @@ A simple MCP server for interacting with Unreal Engine.
 import logging
 import socket
 import sys
+import time
 import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, Optional
@@ -123,82 +124,113 @@ class UnrealConnection:
             logger.error(f"Error during receive: {str(e)}")
             raise
     
+    # Errores de transporte que justifican reintentar el comando
+    RETRYABLE_PHRASES = ("Connection closed", "Timeout", "timed out", "Errno", "Broken pipe", "reset by peer")
+
     def send_command(self, command: str, params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
-        """Send a command to Unreal Engine and get the response."""
-        # Always reconnect for each command, since Unreal closes the connection after each command
-        # This is different from Unity which keeps connections alive
-        if self.socket:
+        """Send a command to Unreal Engine and get the response.
+
+        Unreal re-abre la conexion por comando; a veces acepta una conexion en
+        la que el cliente ya cerro la anterior (carrera en MCPServerRunnable) y
+        no llega respuesta. En ese caso se reintenta (max 3 intentos), pero
+        solo ante fallos de transporte: si Unreal responde con error, se
+        devuelve tal cual sin reintentar. Comandos no idempotentes (p. ej.
+        spawn_actor con nombre fijo) fallarian con error claro en el reintento.
+        """
+        last_error = "unknown error"
+        for attempt in range(3):
+            # Always reconnect for each command, since Unreal closes the connection after each command
+            # This is different from Unity which keeps connections alive
+            if self.socket:
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+                self.connected = False
+
+            if not self.connect():
+                last_error = "Failed to connect to Unreal Engine for command"
+                logger.error(last_error)
+                if attempt < 2:
+                    time.sleep(0.2 * (attempt + 1))
+                    continue
+                return {"status": "error", "error": last_error}
+
             try:
-                self.socket.close()
-            except:
-                pass
-            self.socket = None
-            self.connected = False
-        
-        if not self.connect():
-            logger.error("Failed to connect to Unreal Engine for command")
-            return None
-        
-        try:
-            # Match Unity's command format exactly
-            command_obj = {
-                "type": command,  # Use "type" instead of "command"
-                "params": params or {}  # Use Unity's params or {} pattern
-            }
-            
-            # Send without newline, exactly like Unity
-            command_json = json.dumps(command_obj)
-            logger.info(f"Sending command: {command_json}")
-            self.socket.sendall(command_json.encode('utf-8'))
-            
-            # Read response using improved handler
-            response_data = self.receive_full_response(self.socket)
-            response = json.loads(response_data.decode('utf-8'))
-            
-            # Log complete response for debugging
-            logger.info(f"Complete response from Unreal: {response}")
-            
-            # Check for both error formats: {"status": "error", ...} and {"success": false, ...}
-            if response.get("status") == "error":
-                error_message = response.get("error") or response.get("message", "Unknown Unreal error")
-                logger.error(f"Unreal error (status=error): {error_message}")
-                # We want to preserve the original error structure but ensure error is accessible
-                if "error" not in response:
-                    response["error"] = error_message
-            elif response.get("success") is False:
-                # This format uses {"success": false, "error": "message"} or {"success": false, "message": "message"}
-                error_message = response.get("error") or response.get("message", "Unknown Unreal error")
-                logger.error(f"Unreal error (success=false): {error_message}")
-                # Convert to the standard format expected by higher layers
-                response = {
-                    "status": "error",
-                    "error": error_message
+                # Match Unity's command format exactly
+                command_obj = {
+                    "type": command,  # Use "type" instead of "command"
+                    "params": params or {}  # Use Unity's params or {} pattern
                 }
-            
-            # Always close the connection after command is complete
-            # since Unreal will close it on its side anyway
-            try:
-                self.socket.close()
-            except:
-                pass
-            self.socket = None
-            self.connected = False
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error sending command: {e}")
-            # Always reset connection state on any error
-            self.connected = False
-            try:
-                self.socket.close()
-            except:
-                pass
-            self.socket = None
-            return {
-                "status": "error",
-                "error": str(e)
-            }
+
+                # Send without newline, exactly like Unity
+                command_json = json.dumps(command_obj)
+                logger.info(f"Sending command: {command_json}")
+                self.socket.sendall(command_json.encode('utf-8'))
+
+                # Read response using improved handler
+                response_data = self.receive_full_response(self.socket)
+                response = json.loads(response_data.decode('utf-8'))
+
+                # Log complete response for debugging
+                logger.info(f"Complete response from Unreal: {response}")
+
+                # Check for both error formats: {"status": "error", ...} and {"success": false, ...}
+                if response.get("status") == "error":
+                    error_message = response.get("error") or response.get("message", "Unknown Unreal error")
+                    logger.error(f"Unreal error (status=error): {error_message}")
+                    # We want to preserve the original error structure but ensure error is accessible
+                    if "error" not in response:
+                        response["error"] = error_message
+                elif response.get("success") is False:
+                    # This format uses {"success": false, "error": "message"} or {"success": false, "message": "message"}
+                    error_message = response.get("error") or response.get("message", "Unknown Unreal error")
+                    logger.error(f"Unreal error (success=false): {error_message}")
+                    # Convert to the standard format expected by higher layers
+                    response = {
+                        "status": "error",
+                        "error": error_message
+                    }
+
+                # Always close the connection after command is complete
+                # since Unreal will close it on its side anyway
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+                self.connected = False
+
+                return response
+
+            except Exception as e:
+                logger.error(f"Error sending command: {e}")
+                # Always reset connection state on any error
+                self.connected = False
+                try:
+                    self.socket.close()
+                except:
+                    pass
+                self.socket = None
+                last_error = str(e)
+                retryable = isinstance(e, (ConnectionError, socket.timeout, TimeoutError)) or any(
+                    p in last_error for p in self.RETRYABLE_PHRASES
+                )
+                if retryable and attempt < 2:
+                    logger.warning(
+                        f"Reintento {attempt + 1}/2 de '{command}' tras fallo de transporte: {last_error}"
+                    )
+                    time.sleep(0.2 * (attempt + 1))
+                    continue
+                return {
+                    "status": "error",
+                    "error": last_error
+                }
+        return {
+            "status": "error",
+            "error": last_error
+        }
 
 # Global connection state
 _unreal_connection: UnrealConnection = None
@@ -284,6 +316,7 @@ from tools.foliage_tools import register_foliage_tools
 from tools.vfx_tools import register_vfx_tools
 from tools.sim_tools import register_sim_tools
 from tools.data_tools import register_data_tools
+from tools.game_tools import register_game_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -304,6 +337,7 @@ register_foliage_tools(mcp)
 register_vfx_tools(mcp)
 register_sim_tools(mcp)
 register_data_tools(mcp)
+register_game_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -528,6 +562,13 @@ def info():
       matrices numericas (CSV/TSV/espacios) y las convierte en actores.
       preview, stats, to_unreal (modes points/path/bars), clear.
       Flujo: Octave escribe CSV -> data_preview -> data_to_unreal -> data_clear.
+
+    - `unreal_game` (game_tools.py) — control de juego: consola
+      (execute_console_command), sesion PIE/SIE (play_start, play_status,
+      play_stop), input simulado (simulate_input, requiere sesion 'play') y
+      reflection de funciones (list_functions, call_actor_function).
+      Flujo: list_functions -> call_actor_function -> play_start ->
+      simulate_input -> play_stop.
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`

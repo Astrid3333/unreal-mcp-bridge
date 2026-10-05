@@ -56,4 +56,13 @@ private:
     TSharedPtr<FJsonObject> HandleGetGravity(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetGravity(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleApplyForce(const TSharedPtr<FJsonObject>& Params);
+
+    // --- Fase 3: control de juego (gameplay runtime) ---
+    TSharedPtr<FJsonObject> HandleExecuteConsoleCommand(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandlePlayStart(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandlePlayStop(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandlePlayStatus(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSimulateInput(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleListFunctions(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleCallActorFunction(const TSharedPtr<FJsonObject>& Params);
 }; 

@@ -60,7 +60,8 @@ public class UnrealMCP : ModuleRules
 				"Niagara", "NiagaraEditor",
 				"LevelSequence",
 				"MovieScene",
-				"MovieSceneTracks"
+				"MovieSceneTracks",
+				"LevelEditor"
 			}
 		);
 		
