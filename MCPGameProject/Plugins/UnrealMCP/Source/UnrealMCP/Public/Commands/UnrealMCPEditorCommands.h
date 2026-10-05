@@ -59,6 +59,7 @@ private:
 
     // --- Fase 3: control de juego (gameplay runtime) ---
     TSharedPtr<FJsonObject> HandleExecuteConsoleCommand(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleExecutePython(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandlePlayStart(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandlePlayStop(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandlePlayStatus(const TSharedPtr<FJsonObject>& Params);

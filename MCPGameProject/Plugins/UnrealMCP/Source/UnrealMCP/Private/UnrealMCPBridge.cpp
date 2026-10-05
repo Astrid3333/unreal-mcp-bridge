@@ -285,6 +285,7 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_gravity") ||
                      CommandType == TEXT("apply_force") ||
                      CommandType == TEXT("execute_console_command") ||
+                     CommandType == TEXT("execute_python") ||
                      CommandType == TEXT("play_start") ||
                      CommandType == TEXT("play_stop") ||
                      CommandType == TEXT("play_status") ||

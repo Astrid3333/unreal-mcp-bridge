@@ -317,6 +317,7 @@ from tools.vfx_tools import register_vfx_tools
 from tools.sim_tools import register_sim_tools
 from tools.data_tools import register_data_tools
 from tools.game_tools import register_game_tools
+from tools.py_tools import register_python_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -338,6 +339,7 @@ register_vfx_tools(mcp)
 register_sim_tools(mcp)
 register_data_tools(mcp)
 register_game_tools(mcp)
+register_python_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -569,6 +571,12 @@ def info():
       reflection de funciones (list_functions, call_actor_function).
       Flujo: list_functions -> call_actor_function -> play_start ->
       simulate_input -> play_stop.
+
+    - `unreal_python` (py_tools.py) — ejecutar Python dentro del editor
+      via plugin PythonScriptPlugin (GameThread): python_exec(code, mode=
+      file|statement|evaluate, scope=public|private) y python_exec_file
+      (path de un .py del disco). Acceso completo al modulo `unreal`;
+      scope='public' persiste variables entre llamadas.
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`

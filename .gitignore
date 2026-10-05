@@ -124,6 +124,7 @@ MCPGAMEProject/Config/DefaultEditorPerProjectUserSettings.ini
 MCP/logs/
 MCP/temp/
 *.mcp.json
+.tmp/
 
 # Unreal Engine 5 specific
 .uproject.DotSettings.user

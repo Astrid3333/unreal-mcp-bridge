@@ -61,7 +61,8 @@ public class UnrealMCP : ModuleRules
 				"LevelSequence",
 				"MovieScene",
 				"MovieSceneTracks",
-				"LevelEditor"
+				"LevelEditor",
+				"PythonScriptPlugin"
 			}
 		);
 		

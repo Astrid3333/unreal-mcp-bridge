@@ -1,5 +1,6 @@
 #include "Commands/UnrealMCPEditorCommands.h"
 #include "Misc/ScopeLock.h"
+#include "IPythonScriptPlugin.h"
 #include "Components/BrushComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "GameFramework/WorldSettings.h"
@@ -196,6 +197,10 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     else if (CommandType == TEXT("execute_console_command"))
     {
         return HandleExecuteConsoleCommand(Params);
+    }
+    else if (CommandType == TEXT("execute_python"))
+    {
+        return HandleExecutePython(Params);
     }
     else if (CommandType == TEXT("play_start"))
     {
@@ -2653,10 +2658,104 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleExecuteConsoleCommand(co
     FString OutputCopy;
     { FScopeLock Lock(&Out.Mutex); OutputCopy = Out.Buffer; }
     R->SetStringField(TEXT("output"), OutputCopy);
-    return R;
     if (!bOk)
     {
         R->SetStringField(TEXT("note"), TEXT("El motor devolvio false: comando desconocido o sin efecto."));
+    }
+    return R;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleExecutePython(const TSharedPtr<FJsonObject>& Params)
+{
+    FString Code;
+    if (!Params->TryGetStringField(TEXT("code"), Code) || Code.TrimStartAndEnd().IsEmpty())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Falta el parametro requerido 'code'"));
+    }
+
+    IPythonScriptPlugin* Py = FModuleManager::LoadModulePtr<IPythonScriptPlugin>(TEXT("PythonScriptPlugin"));
+    if (!Py)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Modulo PythonScriptPlugin no cargado (plugin habilitado en .uproject?)"));
+    }
+    if (!Py->IsPythonAvailable())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Python no disponible en este build del plugin"));
+    }
+
+    FString ModeStr = TEXT("file");
+    Params->TryGetStringField(TEXT("mode"), ModeStr);
+    ModeStr = ModeStr.ToLower();
+    EPythonCommandExecutionMode Mode = EPythonCommandExecutionMode::ExecuteFile;
+    if (ModeStr == TEXT("statement"))
+    {
+        Mode = EPythonCommandExecutionMode::ExecuteStatement;
+    }
+    else if (ModeStr == TEXT("evaluate"))
+    {
+        Mode = EPythonCommandExecutionMode::EvaluateStatement;
+    }
+    else if (ModeStr != TEXT("file"))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Mode invalido: usar file, statement o evaluate"));
+    }
+
+    FString ScopeStr = TEXT("public");
+    Params->TryGetStringField(TEXT("scope"), ScopeStr);
+    ScopeStr = ScopeStr.ToLower();
+    EPythonFileExecutionScope Scope = EPythonFileExecutionScope::Public;
+    if (ScopeStr == TEXT("private"))
+    {
+        Scope = EPythonFileExecutionScope::Private;
+    }
+    else if (ScopeStr != TEXT("public"))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Scope invalido: usar public o private"));
+    }
+
+    FPythonCommandEx Cmd;
+    Cmd.Command = Code;
+    Cmd.ExecutionMode = Mode;
+    Cmd.FileExecutionScope = Scope;
+    Cmd.Flags |= EPythonCommandFlags::Unattended;
+
+    UE_LOG(LogTemp, Display, TEXT("HandleExecutePython: mode=%s scope=%s code_len=%d"), *ModeStr, *ScopeStr, Code.Len());
+    const bool bOk = Py->ExecPythonCommandEx(Cmd);
+
+    FString Output;
+    int32 NumErrors = 0;
+    for (const FPythonLogOutputEntry& E : Cmd.LogOutput)
+    {
+        if (Output.Len() > 8000)
+        {
+            Output += TEXT("...[output truncado]");
+            break;
+        }
+        switch (E.Type)
+        {
+        case EPythonLogOutputType::Error: Output += TEXT("[Error] "); NumErrors++; break;
+        case EPythonLogOutputType::Warning: Output += TEXT("[Warning] "); break;
+        default: break;
+        }
+        Output += E.Output;
+        Output += LINE_TERMINATOR;
+    }
+
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), bOk);
+    R->SetStringField(TEXT("mode"), ModeStr);
+    R->SetStringField(TEXT("scope"), ScopeStr);
+    R->SetStringField(TEXT("output"), Output);
+    if (Mode == EPythonCommandExecutionMode::EvaluateStatement)
+    {
+        R->SetStringField(TEXT("result"), Cmd.CommandResult.Left(4000));
+    }
+    if (!bOk)
+    {
+        // El bridge solo copia 'error'/'message' al envelope de error:
+        // el traceback debe ir en 'error' para que el cliente lo reciba.
+        R->SetStringField(TEXT("error"), Cmd.CommandResult.Left(4000));
+        R->SetNumberField(TEXT("errors"), NumErrors);
     }
     return R;
 }
