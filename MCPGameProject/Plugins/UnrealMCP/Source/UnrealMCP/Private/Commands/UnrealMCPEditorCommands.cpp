@@ -1,5 +1,7 @@
 #include "Commands/UnrealMCPEditorCommands.h"
 #include "Components/BrushComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "GameFramework/WorldSettings.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Engine.h"
 #include "Commands/UnrealMCPCommonUtils.h"
@@ -168,6 +170,22 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCommand(const FString& C
     else if (CommandType == TEXT("take_screenshot"))
     {
         return HandleTakeScreenshot(Params);
+    }
+    else if (CommandType == TEXT("line_trace"))
+    {
+        return HandleLineTrace(Params);
+    }
+    else if (CommandType == TEXT("get_gravity"))
+    {
+        return HandleGetGravity(Params);
+    }
+    else if (CommandType == TEXT("set_gravity"))
+    {
+        return HandleSetGravity(Params);
+    }
+    else if (CommandType == TEXT("apply_force"))
+    {
+        return HandleApplyForce(Params);
     }
     
     return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
@@ -1891,5 +1909,227 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreatePBRMaterial(const 
     ResultObj->SetBoolField(TEXT("saved_to_disk"), bSaved);
     ResultObj->SetBoolField(TEXT("assigned_to_actor"), bAssigned);
     ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
+}
+
+// ---------------------------------------------------------------------------
+// Fase 2: consultas y fisica en runtime (line_trace, gravity, force)
+// ---------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleLineTrace(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!Params->HasField(TEXT("start")) || !Params->HasField(TEXT("end")))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'start'/'end' parameters ([x,y,z] each)"));
+    }
+    const FVector Start = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("start"));
+    const FVector End = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("end"));
+
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get editor world"));
+    }
+
+    FString ChannelName = TEXT("visibility");
+    Params->TryGetStringField(TEXT("channel"), ChannelName);
+    ECollisionChannel Channel = ECC_Visibility;
+    if (ChannelName == TEXT("world_static")) Channel = ECC_WorldStatic;
+    else if (ChannelName == TEXT("world_dynamic")) Channel = ECC_WorldDynamic;
+    else if (ChannelName == TEXT("physics")) Channel = ECC_PhysicsBody;
+    else if (ChannelName == TEXT("camera")) Channel = ECC_Camera;
+    else if (ChannelName != TEXT("visibility"))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("Unknown channel '%s' (use visibility|world_static|world_dynamic|physics|camera)"), *ChannelName));
+    }
+
+    bool bTraceComplex = false;
+    Params->TryGetBoolField(TEXT("trace_complex"), bTraceComplex);
+
+    FHitResult Hit;
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(MCPLineTrace), bTraceComplex);
+    const bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, Channel, QueryParams);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetBoolField(TEXT("success"), true);
+    ResultObj->SetBoolField(TEXT("blocking_hit"), bHit);
+    ResultObj->SetStringField(TEXT("channel"), ChannelName);
+    ResultObj->SetNumberField(TEXT("distance"), (End - Start).Size());
+    if (bHit)
+    {
+        ResultObj->SetStringField(TEXT("actor"), Hit.GetActor() ? Hit.GetActor()->GetName() : TEXT(""));
+        ResultObj->SetStringField(TEXT("component"), Hit.GetComponent() ? Hit.GetComponent()->GetName() : TEXT(""));
+        ResultObj->SetNumberField(TEXT("distance_hit"), Hit.Distance);
+        TSharedPtr<FJsonObject> Loc = MakeShared<FJsonObject>();
+        Loc->SetNumberField(TEXT("x"), Hit.Location.X); Loc->SetNumberField(TEXT("y"), Hit.Location.Y); Loc->SetNumberField(TEXT("z"), Hit.Location.Z);
+        ResultObj->SetObjectField(TEXT("location"), Loc);
+        TSharedPtr<FJsonObject> Norm = MakeShared<FJsonObject>();
+        Norm->SetNumberField(TEXT("x"), Hit.ImpactNormal.X); Norm->SetNumberField(TEXT("y"), Hit.ImpactNormal.Y); Norm->SetNumberField(TEXT("z"), Hit.ImpactNormal.Z);
+        ResultObj->SetObjectField(TEXT("normal"), Norm);
+        TSharedPtr<FJsonObject> PhysMat = MakeShared<FJsonObject>();
+        if (Hit.PhysMaterial.IsValid())
+        {
+            PhysMat->SetStringField(TEXT("name"), Hit.PhysMaterial->GetName());
+            ResultObj->SetObjectField(TEXT("physical_material"), PhysMat);
+        }
+    }
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleGetGravity(const TSharedPtr<FJsonObject>& Params)
+{
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get editor world"));
+    }
+    AWorldSettings* Settings = World->GetWorldSettings();
+    if (!Settings)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get world settings"));
+    }
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetBoolField(TEXT("success"), true);
+    ResultObj->SetNumberField(TEXT("gravity_z"), Settings->GetGravityZ());
+    ResultObj->SetBoolField(TEXT("override_global"), Settings->bGlobalGravitySet != 0);
+    if (Settings->bGlobalGravitySet)
+    {
+        ResultObj->SetNumberField(TEXT("global_gravity_z"), Settings->GlobalGravityZ);
+    }
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetGravity(const TSharedPtr<FJsonObject>& Params)
+{
+    if (!Params->HasField(TEXT("gravity_z")) && !Params->HasField(TEXT("gravity")))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'gravity_z' (float, cm/s^2, ej. -980 default, -1620 Luna, -3720 Marte)"));
+    }
+    double Value = 0.0;
+    if (Params->HasField(TEXT("gravity_z"))) Value = Params->GetNumberField(TEXT("gravity_z"));
+    else Value = Params->GetNumberField(TEXT("gravity"));
+
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get editor world"));
+    }
+    AWorldSettings* Settings = World->GetWorldSettings();
+    if (!Settings)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get world settings"));
+    }
+
+    Settings->Modify();
+    Settings->bGlobalGravitySet = true;
+    Settings->GlobalGravityZ = (float)Value;
+    Settings->bWorldGravitySet = true;
+    Settings->WorldGravityZ = (float)Value;
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetBoolField(TEXT("success"), true);
+    ResultObj->SetNumberField(TEXT("gravity_z"), Settings->GetGravityZ());
+    ResultObj->SetStringField(TEXT("note"), TEXT("Afecta a cuerpos con SimulatePhysics (en editor: selecciona y pulsa Simulate; en PIE funciona al instante)."));
+    return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleApplyForce(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("name"), ActorName))
+    {
+        if (!Params->TryGetStringField(TEXT("actor_name"), ActorName))
+        {
+            return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+        }
+    }
+    if (!Params->HasField(TEXT("force")) && !Params->HasField(TEXT("impulse")) && !Params->HasField(TEXT("velocity_change")))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'force'|'impulse'|'velocity_change' ([x,y,z])"));
+    }
+
+    AActor* TargetActor = nullptr;
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor && (Actor->GetName() == ActorName || Actor->GetActorLabel() == ActorName))
+        {
+            TargetActor = Actor;
+            break;
+        }
+    }
+    if (!TargetActor)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    TArray<UPrimitiveComponent*> Prims;
+    TargetActor->GetComponents<UPrimitiveComponent>(Prims);
+    UPrimitiveComponent* Prim = nullptr;
+    for (UPrimitiveComponent* C : Prims)
+    {
+        if (C && C->IsSimulatingPhysics())
+        {
+            Prim = C;
+            break;
+        }
+    }
+    bool bEnablePhysics = false;
+    Params->TryGetBoolField(TEXT("enable_physics"), bEnablePhysics);
+    if (!Prim && bEnablePhysics)
+    {
+        for (UPrimitiveComponent* C : Prims)
+        {
+            if (C && C->IsRegistered())
+            {
+                C->SetSimulatePhysics(true);
+                Prim = C;
+                break;
+            }
+        }
+    }
+    if (!Prim)
+    {
+        TArray<FString> Names;
+        for (UPrimitiveComponent* C : Prims) if (C) Names.Add(C->GetName());
+        return FUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("Ningun componente de '%s' simula fisica. Componentes: [%s]. Pasa enable_physics=true para activarlo."),
+                *ActorName, *FString::Join(Names, TEXT(", "))));
+    }
+
+    FVector Force(0, 0, 0);
+    FString Mode = TEXT("force");
+    if (Params->HasField(TEXT("force"))) { Force = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("force")); Mode = TEXT("force"); }
+    else if (Params->HasField(TEXT("impulse"))) { Force = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("impulse")); Mode = TEXT("impulse"); }
+    else { Force = FUnrealMCPCommonUtils::GetVectorFromJson(Params, TEXT("velocity_change")); Mode = TEXT("velocity_change"); }
+
+    if (Mode == TEXT("force")) Prim->AddForce(Force, NAME_None, /*bAccelChange=*/true);
+    else if (Mode == TEXT("impulse")) Prim->AddImpulse(Force, NAME_None, /*bVelChange=*/true);
+    else Prim->AddImpulse(Force, NAME_None, /*bVelChange=*/true);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetBoolField(TEXT("success"), true);
+    ResultObj->SetStringField(TEXT("actor"), TargetActor->GetName());
+    ResultObj->SetStringField(TEXT("component"), Prim->GetName());
+    ResultObj->SetStringField(TEXT("mode"), Mode);
+    ResultObj->SetNumberField(TEXT("mass"), Prim->GetMass());
+    TSharedPtr<FJsonObject> Vel = MakeShared<FJsonObject>();
+    const FVector V = Prim->GetPhysicsLinearVelocity();
+    Vel->SetNumberField(TEXT("x"), V.X); Vel->SetNumberField(TEXT("y"), V.Y); Vel->SetNumberField(TEXT("z"), V.Z);
+    ResultObj->SetObjectField(TEXT("velocity_after"), Vel);
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    const bool bGameWorld = World && World->IsGameWorld();
+    ResultObj->SetBoolField(TEXT("game_world"), bGameWorld);
+    if (!bGameWorld && Prim->GetMass() <= 0.0f)
+    {
+        ResultObj->SetStringField(TEXT("note"),
+            TEXT("Editor (no PIE): el cuerpo aun no tiene masa porque la simulacion no corre hasta pulsar Simulate o entrar en PIE; el impulso queda aplicado."));
+    }
+    if (bEnablePhysics)
+    {
+        ResultObj->SetBoolField(TEXT("physics_enabled"), true);
+    }
     return ResultObj;
 }

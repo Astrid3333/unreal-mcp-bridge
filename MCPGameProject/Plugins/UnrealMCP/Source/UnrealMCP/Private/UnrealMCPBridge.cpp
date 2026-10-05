@@ -279,7 +279,11 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_material_vector_parameter") ||
                      CommandType == TEXT("duplicate_actor") ||
                      CommandType == TEXT("get_actor_bounds") ||
-                     CommandType == TEXT("attach_actor_to_actor"))
+                     CommandType == TEXT("attach_actor_to_actor") ||
+                     CommandType == TEXT("line_trace") ||
+                     CommandType == TEXT("get_gravity") ||
+                     CommandType == TEXT("set_gravity") ||
+                     CommandType == TEXT("apply_force"))
             {
                 ResultJson = EditorCommands->HandleCommand(CommandType, Params);
             }

@@ -748,7 +748,100 @@ def register_editor_tools(mcp: FastMCP):
         except Exception as e:
             return {'success': False, 'message': f'Error creating PBR material: {e}'}
 
-    ACTIONS = {'get_actors_in_level': _get_actors_in_level, 'find_actors_by_name': _find_actors_by_name, 'spawn_actor': _spawn_actor, 'delete_actor': _delete_actor, 'set_actor_transform': _set_actor_transform, 'get_actor_properties': _get_actor_properties, 'set_actor_property': _set_actor_property, 'focus_viewport': focus_viewport, 'take_screenshot': _take_screenshot, 'spawn_blueprint_actor': _spawn_blueprint_actor, 'spawn_foliage_instances': _spawn_foliage_instances, 'set_actor_material': _set_actor_material, 'get_actor_material': _get_actor_material, 'create_dynamic_material_instance': _create_dynamic_material_instance, 'set_material_scalar_parameter': _set_material_scalar_parameter, 'set_material_vector_parameter': _set_material_vector_parameter, 'create_material': _create_material, 'duplicate_actor': _duplicate_actor, 'get_actor_bounds': _get_actor_bounds, 'attach_actor_to_actor': _attach_actor_to_actor, 'get_material_properties': _get_material_properties, 'set_material_blend_mode': _set_material_blend_mode, 'create_moss_stone_material': _create_moss_stone_material, 'import_texture': _import_texture, 'create_pbr_material': _create_pbr_material}
+    def _line_trace(ctx: Context, start: List[float], end: List[float],
+                    channel: str = 'visibility', trace_complex: bool = False) -> Dict[str, Any]:
+        """Cast a line trace (raycast) in the world and report what it hits.
+
+        Args:
+            ctx: The MCP context
+            start: [x, y, z] world-space start of the ray (cm)
+            end: [x, y, z] world-space end of the ray (cm)
+            channel: collision channel: visibility | world_static | world_dynamic | physics | camera
+            trace_complex: use complex (per-polygon) collision if True
+
+        Returns:
+            Dict with blocking_hit, and on hit: actor, component, location, normal, distance_hit
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            response = unreal.send_command('line_trace', {
+                'start': [float(v) for v in start], 'end': [float(v) for v in end],
+                'channel': channel, 'trace_complex': bool(trace_complex)})
+            return response or {'success': False, 'message': 'No response from Unreal Engine'}
+        except Exception as e:
+            return {'success': False, 'message': f'Error in line_trace: {e}'}
+
+    def _get_gravity(ctx: Context) -> Dict[str, Any]:
+        """Read the current world gravity (gravity_z in cm/s^2, default -980).
+
+        Args:
+            ctx: The MCP context
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            response = unreal.send_command('get_gravity', {})
+            return response or {'success': False, 'message': 'No response from Unreal Engine'}
+        except Exception as e:
+            return {'success': False, 'message': f'Error in get_gravity: {e}'}
+
+    def _set_gravity(ctx: Context, gravity_z: float) -> Dict[str, Any]:
+        """Set the world gravity override (cm/s^2). Affects bodies with SimulatePhysics.
+
+        Args:
+            ctx: The MCP context
+            gravity_z: gravity in cm/s^2 (default UE -980, Moon -1620, Mars -3720)
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            response = unreal.send_command('set_gravity', {'gravity_z': float(gravity_z)})
+            return response or {'success': False, 'message': 'No response from Unreal Engine'}
+        except Exception as e:
+            return {'success': False, 'message': f'Error in set_gravity: {e}'}
+
+    def _apply_force(ctx: Context, name: str, force: Optional[List[float]] = None,
+                     impulse: Optional[List[float]] = None,
+                     velocity_change: Optional[List[float]] = None,
+                     enable_physics: bool = False) -> Dict[str, Any]:
+        """Apply a force/impulse to an actor's physics-simulating component.
+
+        Args:
+            ctx: The MCP context
+            name: actor name (or label)
+            force: [x,y,z] continuous force in N (treated as accel change)
+            impulse: [x,y,z] instantaneous impulse in kg*cm/s (bVelChange: treated as velocity change)
+            velocity_change: alias of impulse
+            enable_physics: if True, turn on SimulatePhysics on the first registered component
+                            when none is simulating yet
+
+        Returns:
+            Dict with actor, component, mode, mass, velocity_after
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params: Dict[str, Any] = {'name': name, 'enable_physics': bool(enable_physics)}
+            for key, value in (('force', force), ('impulse', impulse), ('velocity_change', velocity_change)):
+                if value is not None:
+                    params[key] = [float(v) for v in value]
+            if len(params) == 2:
+                return {'success': False, 'message': 'Pasa force, impulse o velocity_change'}
+            response = unreal.send_command('apply_force', params)
+            return response or {'success': False, 'message': 'No response from Unreal Engine'}
+        except Exception as e:
+            return {'success': False, 'message': f'Error in apply_force: {e}'}
+
+    ACTIONS = {'get_actors_in_level': _get_actors_in_level, 'find_actors_by_name': _find_actors_by_name, 'spawn_actor': _spawn_actor, 'delete_actor': _delete_actor, 'set_actor_transform': _set_actor_transform, 'get_actor_properties': _get_actor_properties, 'set_actor_property': _set_actor_property, 'focus_viewport': focus_viewport, 'take_screenshot': _take_screenshot, 'spawn_blueprint_actor': _spawn_blueprint_actor, 'spawn_foliage_instances': _spawn_foliage_instances, 'set_actor_material': _set_actor_material, 'get_actor_material': _get_actor_material, 'create_dynamic_material_instance': _create_dynamic_material_instance, 'set_material_scalar_parameter': _set_material_scalar_parameter, 'set_material_vector_parameter': _set_material_vector_parameter, 'create_material': _create_material, 'duplicate_actor': _duplicate_actor, 'get_actor_bounds': _get_actor_bounds, 'attach_actor_to_actor': _attach_actor_to_actor, 'get_material_properties': _get_material_properties, 'set_material_blend_mode': _set_material_blend_mode, 'create_moss_stone_material': _create_moss_stone_material, 'import_texture': _import_texture, 'create_pbr_material': _create_pbr_material, 'line_trace': _line_trace, 'get_gravity': _get_gravity, 'set_gravity': _set_gravity, 'apply_force': _apply_force}
 
     @mcp.tool()
     def unreal_actor(ctx: Context, action: str, params: Dict[str, Any]={}) -> Any:
@@ -782,6 +875,10 @@ def register_editor_tools(mcp: FastMCP):
       - duplicate_actor(actor_name, new_name, location_offset): Clone an existing actor, copying its mesh, materials and other properties.
       - get_actor_bounds(actor_name): Get the world-space bounding box of an actor (origin and extent).
       - attach_actor_to_actor(actor_name, parent_actor_name, socket_name, attachment_rule): Attach (parent) one actor to another, optionally at a specific socket.
+      - line_trace(start, end, channel, trace_complex): Raycast y devuelve actor/normal/distancia del impacto.
+      - get_gravity(): Gravedad actual del mundo (cm/s^2).
+      - set_gravity(gravity_z): Sobrescribe la gravedad del mundo (ej. -980, -1620 Luna, -3720 Marte).
+      - apply_force(name, force, impulse, velocity_change, enable_physics): Aplica fuerza/impulso a un actor con fisica.
     """
         if action not in ACTIONS:
             return {'success': False, 'message': f"Accion desconocida '{action}'. Disponibles: {list(ACTIONS.keys())}"}

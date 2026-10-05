@@ -50,4 +50,10 @@ private:
     // Editor viewport commands
     TSharedPtr<FJsonObject> HandleFocusViewport(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleTakeScreenshot(const TSharedPtr<FJsonObject>& Params);
+
+    // Physics / query commands (fase 2)
+    TSharedPtr<FJsonObject> HandleLineTrace(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetGravity(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetGravity(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleApplyForce(const TSharedPtr<FJsonObject>& Params);
 }; 
