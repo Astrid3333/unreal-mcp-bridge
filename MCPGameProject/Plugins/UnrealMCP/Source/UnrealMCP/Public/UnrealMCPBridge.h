@@ -10,6 +10,7 @@
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "Commands/UnrealMCPEditorCommands.h"
 #include "Commands/UnrealMCPAssetCommands.h"
+#include "Commands/UnrealMCPLogCommands.h"
 #include "Commands/UnrealMCPBlueprintCommands.h"
 #include "Commands/UnrealMCPBlueprintNodeCommands.h"
 #include "Commands/UnrealMCPProjectCommands.h"
@@ -69,6 +70,7 @@ private:
 	// Command handler instances
 	TSharedPtr<FUnrealMCPEditorCommands> EditorCommands;
 	TSharedPtr<FUnrealMCPAssetCommands> AssetCommands;
+	TSharedPtr<FUnrealMCPLogCommands> LogCommands;
 	TSharedPtr<FUnrealMCPBlueprintCommands> BlueprintCommands;
 	TSharedPtr<FUnrealMCPBlueprintNodeCommands> BlueprintNodeCommands;
 	TSharedPtr<FUnrealMCPProjectCommands> ProjectCommands;

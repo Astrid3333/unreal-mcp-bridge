@@ -53,6 +53,7 @@
 // Include our new command handler classes
 #include "Commands/UnrealMCPEditorCommands.h"
 #include "Commands/UnrealMCPAssetCommands.h"
+#include "Commands/UnrealMCPLogCommands.h"
 #include "Commands/UnrealMCPBlueprintCommands.h"
 #include "Commands/UnrealMCPBlueprintNodeCommands.h"
 #include "Commands/UnrealMCPProjectCommands.h"
@@ -77,6 +78,7 @@ UUnrealMCPBridge::UUnrealMCPBridge()
 {
     EditorCommands = MakeShared<FUnrealMCPEditorCommands>();
     AssetCommands = MakeShared<FUnrealMCPAssetCommands>();
+    LogCommands = MakeShared<FUnrealMCPLogCommands>();
     BlueprintCommands = MakeShared<FUnrealMCPBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FUnrealMCPBlueprintNodeCommands>();
     ProjectCommands = MakeShared<FUnrealMCPProjectCommands>();
@@ -97,6 +99,7 @@ UUnrealMCPBridge::~UUnrealMCPBridge()
 {
     EditorCommands.Reset();
     AssetCommands.Reset();
+    LogCommands.Reset();
     BlueprintCommands.Reset();
     BlueprintNodeCommands.Reset();
     ProjectCommands.Reset();
@@ -432,6 +435,11 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("create_asset"))
             {
                 ResultJson = AssetCommands->HandleCommand(CommandType, Params);
+            }
+            else if (CommandType == TEXT("get_log_entries") ||
+                     CommandType == TEXT("clear_log_buffer"))
+            {
+                ResultJson = LogCommands->HandleCommand(CommandType, Params);
             }
             else if (CommandType == TEXT("get_navmesh_info") ||
                      CommandType == TEXT("build_navigation") ||

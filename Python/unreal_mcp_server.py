@@ -320,6 +320,7 @@ from tools.game_tools import register_game_tools
 from tools.py_tools import register_python_tools
 from tools.editor_state_tools import register_editor_state_tools
 from tools.asset_tools import register_asset_tools
+from tools.ops_tools import register_batch_tools, register_wait_tools, register_log_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -344,6 +345,9 @@ register_game_tools(mcp)
 register_python_tools(mcp)
 register_editor_state_tools(mcp)
 register_asset_tools(mcp)
+register_batch_tools(mcp)
+register_wait_tools(mcp)
+register_log_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -594,6 +598,19 @@ def info():
       del disco a /Game; asset_create(type="material"|"blueprint", name=...)
       da de alta assets vacios; asset_find(name=..., class_=..., path=...)
       busca en el AssetRegistry por subcadena, clase y ruta.
+
+    - `unreal_batch` (ops_tools.py) — batch_run(commands=[{type, params},
+      ...], stop_on_error=...) ejecuta varios comandos en serie en una
+      sola llamada MCP.
+
+    - `unreal_wait` (ops_tools.py) — wait_until(condition, params=...,
+      timeout=...) espera activa a condiciones del editor (pending_idle,
+      map, dirty, playing, selection_count, actor_count, log) en vez de
+      dormir a ciegas.
+
+    - `unreal_log` (ops_tools.py) — log_get(limit, category, min_severity,
+      contains, since_seq) lee el buffer circular (2000 lineas) del
+      FOutputDevice del editor; log_clear() lo vacia.
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`
