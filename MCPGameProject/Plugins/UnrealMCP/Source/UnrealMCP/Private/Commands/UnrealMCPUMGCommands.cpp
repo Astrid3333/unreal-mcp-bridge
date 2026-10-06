@@ -6,6 +6,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Components/TextBlock.h"
 #include "WidgetBlueprint.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
 // We'll create widgets using regular Factory classes
 #include "Factories/Factory.h"
 // Remove problematic includes that don't exist in UE 5.5
@@ -87,14 +88,17 @@ TSharedPtr<FJsonObject> FUnrealMCPUMGCommands::HandleCreateUMGWidgetBlueprint(co
 		return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package"));
 	}
 
-	// Create Widget Blueprint using KismetEditorUtilities
+	// Create Widget Blueprint using KismetEditorUtilities.
+	// OJO: BlueprintClass debe ser UWidgetBlueprint (no UBlueprint): con
+	// UBlueprint el Cast<UWidgetBlueprint> fallaba siempre ("Failed to create
+	// Widget Blueprint" en run 5).
 	UBlueprint* NewBlueprint = FKismetEditorUtilities::CreateBlueprint(
 		UUserWidget::StaticClass(),  // Parent class
 		Package,                     // Outer package
 		FName(*AssetName),           // Blueprint name
 		BPTYPE_Normal,               // Blueprint type
-		UBlueprint::StaticClass(),   // Blueprint class
-		UBlueprintGeneratedClass::StaticClass(), // Generated class
+		UWidgetBlueprint::StaticClass(),
+		UWidgetBlueprintGeneratedClass::StaticClass(),
 		FName("CreateUMGWidget")     // Creation method name
 	);
 
@@ -103,6 +107,12 @@ TSharedPtr<FJsonObject> FUnrealMCPUMGCommands::HandleCreateUMGWidgetBlueprint(co
 	if (!WidgetBlueprint)
 	{
 		return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create Widget Blueprint"));
+	}
+
+	// WidgetTree puede venir nulo segun como se cree el blueprint
+	if (!WidgetBlueprint->WidgetTree)
+	{
+		WidgetBlueprint->WidgetTree = NewObject<UWidgetTree>(WidgetBlueprint, TEXT("WidgetTree"), RF_Transient);
 	}
 
 	// Add a default Canvas Panel if one doesn't exist

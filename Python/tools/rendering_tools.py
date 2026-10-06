@@ -1,6 +1,6 @@
 """Rendering Tools for Unreal MCP - control generico de render quality via cvars."""
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger('UnrealMCP')
@@ -23,19 +23,20 @@ def register_rendering_tools(mcp: FastMCP):
         except Exception as e:
             return {'success': False, 'message': f'Error getting cvar: {e}'}
 
-    def _set_cvar(ctx: Context, cvar_name: str, value: str) -> Dict[str, Any]:
+    def _set_cvar(ctx: Context, cvar_name: str, value: Union[str, float, int]) -> Dict[str, Any]:
         """Setea una consola variable (cvar) de Unreal.
 
         cvar_name: nombre completo (ver get_cvar para ejemplos).
-        value: valor como string -- Unreal lo parsea al tipo correcto segun la
-          cvar (ej '75' para r.ScreenPercentage, '1'/'0' para r.RayTracing.Enable).
+        value: valor como string o numero -- se envia como string y Unreal lo
+          parsea al tipo correcto segun la cvar (75, '75' o 75.0 para
+          r.ScreenPercentage; 1/'1'/'true' para r.RayTracing.Enable).
         """
         from unreal_mcp_server import get_unreal_connection
         try:
             unreal = get_unreal_connection()
             if not unreal:
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            return unreal.send_command('set_cvar', {'cvar_name': cvar_name, 'value': value}) or {}
+            return unreal.send_command('set_cvar', {'cvar_name': cvar_name, 'value': str(value)}) or {}
         except Exception as e:
             return {'success': False, 'message': f'Error setting cvar: {e}'}
 

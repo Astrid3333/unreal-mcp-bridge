@@ -118,6 +118,98 @@ def register_material_node_tools(mcp: FastMCP):
         except Exception as e:
             return {'success': False, 'message': f'Error listing available expression types: {e}'}
 
+    def _create_empty_material(ctx: Context, name: str, path: str = '/Game/Materials') -> Dict[str, Any]:
+        """Crea un material vacio (sin nodos) y lo guarda a disco.
+
+        Es el material base para alimentar add_material_expression. Si el
+        material ya existe lo vacia en sitio (conserva las referencias de
+        actores que ya lo tengan asignado). Devuelve material_path, que es
+        lo que se pasa al resto de los comandos de este dominio.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            return unreal.send_command('create_empty_material', {'name': name, 'path': path}) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error creating empty material: {e}'}
+
+    def _delete_material_expression(ctx: Context, material_path: str, node_id: str) -> Dict[str, Any]:
+        """Borra un nodo del grafo, anula todas sus referencias y guarda a disco.
+
+        El node_id queda libre para reusarse en una proxima creacion.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            return unreal.send_command('delete_material_expression',
+                                      {'material_path': material_path, 'node_id': node_id}) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error deleting material expression: {e}'}
+
+    def _set_material_expression_property(ctx: Context, material_path: str, node_id: str,
+                                          property: str, value: Any) -> Dict[str, Any]:
+        """Setea cualquier propiedad escalar/reflejada de un nodo y guarda a disco.
+
+        property: nombre real de la UPROPERTY en C++ (ej. R, G, B, ConstA,
+          Texture, SamplerType, bClamp). Usa get_material_expression para
+          ver que propiedades expone un nodo y sus valores actuales.
+        value: numero, string, bool o [r,g,b,a] segun el tipo de propiedad.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'material_path': material_path, 'node_id': node_id,
+                      'property': property, 'value': value}
+            return unreal.send_command('set_material_expression_property', params) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error setting material expression property: {e}'}
+
+    def _get_material_expression(ctx: Context, material_path: str, node_id: str) -> Dict[str, Any]:
+        """Lee un nodo: clase, expression_type, posicion, pines de entrada
+        (con su conexion), outputs disponibles y dump de propiedades escalares.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            return unreal.send_command('get_material_expression',
+                                      {'material_path': material_path, 'node_id': node_id}) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error getting material expression: {e}'}
+
+    def _disconnect_material_input(ctx: Context, material_path: str, node_id: str,
+                                   target_pin: str) -> Dict[str, Any]:
+        """Desconecta el pin de entrada target_pin de un nodo (lo deja sin fuente)
+        y guarda a disco. Si el pin no existe, el error lista los pines disponibles.
+        """
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            params = {'material_path': material_path, 'node_id': node_id, 'target_pin': target_pin}
+            return unreal.send_command('disconnect_material_input', params) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error disconnecting material input: {e}'}
+
+    def _save_material(ctx: Context, material_path: str) -> Dict[str, Any]:
+        """Guarda el .uasset del material a disco (solo materiales de /Game/)."""
+        from unreal_mcp_server import get_unreal_connection
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
+            return unreal.send_command('save_material', {'material_path': material_path}) or {}
+        except Exception as e:
+            return {'success': False, 'message': f'Error saving material: {e}'}
+
     ACTIONS = {
         'add_material_expression': _add_material_expression,
         'connect_material_expressions': _connect_material_expressions,
@@ -125,6 +217,12 @@ def register_material_node_tools(mcp: FastMCP):
         'list_material_expressions': _list_material_expressions,
         'set_material_expression_constant': _set_material_expression_constant,
         'list_available_expression_types': _list_available_expression_types,
+        'create_empty_material': _create_empty_material,
+        'delete_material_expression': _delete_material_expression,
+        'set_material_expression_property': _set_material_expression_property,
+        'get_material_expression': _get_material_expression,
+        'disconnect_material_input': _disconnect_material_input,
+        'save_material': _save_material,
     }
 
     @mcp.tool()
@@ -139,6 +237,12 @@ def register_material_node_tools(mcp: FastMCP):
           - list_material_expressions(material_path)
           - set_material_expression_constant(material_path, node_id, value)
           - list_available_expression_types(): introspeccion en vivo de expression_type soportados
+          - create_empty_material(name, path): material vacio base para el grafo
+          - delete_material_expression(material_path, node_id)
+          - set_material_expression_property(material_path, node_id, property, value)
+          - get_material_expression(material_path, node_id): pines + propiedades
+          - disconnect_material_input(material_path, node_id, target_pin)
+          - save_material(material_path)
         """
         if action not in ACTIONS:
             return {'success': False, 'message': f"Acción desconocida '{action}'. Disponibles: {list(ACTIONS.keys())}"}

@@ -126,7 +126,7 @@ def install_trace_recording(mcp: FastMCP) -> int:
     return wrapped
 
 
-def _trace_get(ctx: Any, limit: int = 100, tool: str = "",
+def _trace_get(ctx: Context, limit: int = 100, tool: str = "",
                ok: Optional[bool] = None, since_seq: int = 0) -> Dict[str, Any]:
     try:
         limit = int(limit)
@@ -156,7 +156,7 @@ def _trace_get(ctx: Any, limit: int = 100, tool: str = "",
             "traces": returned}
 
 
-def _trace_clear(ctx: Any) -> Dict[str, Any]:
+def _trace_clear(ctx: Context) -> Dict[str, Any]:
     global _SEQ
     with _LOCK:
         cleared = len(_BUFFER)

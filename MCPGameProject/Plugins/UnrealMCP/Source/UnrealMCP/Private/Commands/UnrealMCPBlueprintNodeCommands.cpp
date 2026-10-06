@@ -888,10 +888,8 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleFindBlueprintNode
     }
 
     FString NodeType;
-    if (!Params->TryGetStringField(TEXT("node_type"), NodeType))
-    {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
-    }
+    // node_type es opcional: sin el, se listan todos los nodos del event graph.
+    Params->TryGetStringField(TEXT("node_type"), NodeType);
 
     // Find the blueprint
     UBlueprint* Blueprint = FUnrealMCPCommonUtils::FindBlueprint(BlueprintName);
@@ -909,9 +907,20 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintNodeCommands::HandleFindBlueprintNode
 
     // Create a JSON array for the node GUIDs
     TArray<TSharedPtr<FJsonValue>> NodeGuidArray;
-    
+
+    // Sin node_type: todos los nodos del event graph.
+    if (NodeType.IsEmpty())
+    {
+        for (UEdGraphNode* Node : EventGraph->Nodes)
+        {
+            if (Node)
+            {
+                NodeGuidArray.Add(MakeShared<FJsonValueString>(Node->NodeGuid.ToString()));
+            }
+        }
+    }
     // Filter nodes by the exact requested type
-    if (NodeType == TEXT("Event"))
+    else if (NodeType == TEXT("Event"))
     {
         FString EventName;
         if (!Params->TryGetStringField(TEXT("event_name"), EventName))

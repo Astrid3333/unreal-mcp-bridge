@@ -77,9 +77,75 @@ después de armado.
 
 Solo funciona sobre: `Constant`, `ScalarParameter`, `Constant2Vector`, `Constant3Vector`, `Constant4Vector`, `VectorParameter`.
 
+## Comandos de ciclo de vida (nuevos)
+
+Seis comandos más para armar/editar/guardar el grafo completo sin salir de este dominio.
+Todos trabajan sobre `material_path` y guardan el `.uasset` a disco (solo `/Game/`).
+
+### create_empty_material
+
+Crea un material vacío (sin nodos) y lo guarda a disco. Es el material base para
+`add_material_expression`. Si el material ya existe lo vacía en sitio (conserva las
+referencias de actores que ya lo tengan asignado).
+
+**Parámetros:** `name` (string), `path` (string, opcional, default `/Game/Materials`)
+
+**Returns:** `material_path` — lo que se pasa al resto de los comandos.
+
+Nota: el wrapper de alto nivel `unreal_actor.create_material` sigue ruteando al handler
+antiguo (`create_material` de EditorCommands, que crea un material con color/roughness
+fijos); para un grafo nodo por nodo usar este `create_empty_material`.
+
+### get_material_expression
+
+Lee un nodo: clase, `expression_type`, posición, pines de entrada (con su conexión),
+outputs disponibles y dump de propiedades escalares. Es la forma de descubrir qué
+propiedades acepta `set_material_expression_property`.
+
+**Parámetros:** `material_path`, `node_id`
+
+**Returns:** `class`, `expression_type`, `position`, `inputs` (pin → fuente conectada),
+`outputs`, `properties`.
+
+### set_material_expression_property
+
+Setea cualquier propiedad escalar/reflejada de un nodo y guarda a disco.
+A diferencia de `set_material_expression_constant` (que solo toca el valor default
+de constantes/parámetros), éste sirve para propiedades arbitrarias del nodo.
+
+**Parámetros:**
+- `material_path` (string)
+- `node_id` (string)
+- `property` (string) — nombre real de la UPROPERTY en C++ (ej. `R`, `G`, `B`,
+  `ConstA`, `Texture`, `SamplerType`, `bClamp`)
+- `value` (number | string | bool | `[r,g,b,a]`) — según el tipo de la propiedad
+
+### delete_material_expression
+
+Borra un nodo del grafo, anula todas sus referencias (nada queda apuntando a él) y
+guarda a disco. El `node_id` queda libre para reusarse.
+
+**Parámetros:** `material_path`, `node_id`
+
+### disconnect_material_input
+
+Desconecta el pin de entrada `target_pin` de un nodo (lo deja sin fuente) y guarda a
+disco. Si el pin no existe, el error lista los pines disponibles del nodo.
+
+**Parámetros:** `material_path`, `node_id`, `target_pin`
+
+### save_material
+
+Guarda el `.uasset` del material a disco. Los demás comandos ya guardan solos; éste
+existe para forzar el guardado tras una tanda de ediciones externas.
+
+**Parámetros:** `material_path`
+
+**Returns:** `saved_to_disk`, `success`
+
 ## Type Reference
 
-### expression_type válidos (28)
+### expression_type válidos (29)
 
 `Add`, `Subtract`, `Multiply`, `Divide`, `LinearInterpolate`, `Clamp`, `Power`, `OneMinus`,
 `Desaturation`, `DotProduct`, `Normalize`, `ComponentMask`, `AppendVector`, `Distance`, `Fresnel`,
@@ -136,7 +202,9 @@ Grafo tipo: dos texturas mezcladas con un `LinearInterpolate` controlado por un 
 ```
 
 Este es exactamente el ejemplo que propone el documento de "Fase 3" (create_material_graph_from_steps)
-— pero armable hoy con los 5 primitivos existentes, sin tooling nuevo.
+— armarlo hoy requiere las 12 acciones del dominio: empezar con `create_empty_material`
+(si el material no existe aún), las 5 primitivos de grafo de arriba, y `save_material`
+solo si querés forzar el guardado (`set_material_output` ya guarda solo).
 
 ## Error Handling
 

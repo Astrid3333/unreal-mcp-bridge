@@ -28,6 +28,10 @@ class UNREALMCP_API FUnrealMCPFoliageCommands
 public:
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
+    // Stateless: accesible desde otros comandos (p. ej. spawn_foliage_instances
+    // en UnrealMCPEditorCommands) para evitar el ensure de IsLevelPartition().
+    static AInstancedFoliageActor* GetOrCreateFoliageActor(FString& OutError);
+
 private:
     TSharedPtr<FJsonObject> HandleCreateFoliageType(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddFoliageInstances(const TSharedPtr<FJsonObject>& Params);
@@ -35,5 +39,4 @@ private:
     TSharedPtr<FJsonObject> HandleListFoliageTypes(const TSharedPtr<FJsonObject>& Params);
 
     UFoliageType* LoadFoliageTypeAsset(const FString& FoliageTypePath, FString& OutError);
-    AInstancedFoliageActor* GetOrCreateFoliageActor(FString& OutError);
 };

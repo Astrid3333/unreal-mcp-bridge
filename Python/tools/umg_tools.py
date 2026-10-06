@@ -29,7 +29,9 @@ def register_umg_tools(mcp: FastMCP):
             if not unreal:
                 logger.error('Failed to connect to Unreal Engine')
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            params = {'widget_name': widget_name, 'parent_class': parent_class, 'path': path}
+            # El C++ lee 'name' (UMGCommands.cpp:67); el resto se ignora pero
+            # se mantiene para compat con wrappers/futuro.
+            params = {'name': widget_name, 'widget_name': widget_name, 'parent_class': parent_class, 'path': path}
             logger.info(f'Creating UMG Widget Blueprint with params: {params}')
             response = unreal.send_command('create_umg_widget_blueprint', params)
             if not response:
@@ -64,7 +66,7 @@ def register_umg_tools(mcp: FastMCP):
             if not unreal:
                 logger.error('Failed to connect to Unreal Engine')
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            params = {'widget_name': widget_name, 'text_block_name': text_block_name, 'text': text, 'position': position, 'size': size, 'font_size': font_size, 'color': color}
+            params = {'blueprint_name': widget_name, 'widget_name': text_block_name, 'text': text, 'position': position, 'size': size, 'font_size': font_size, 'color': color}
             logger.info(f'Adding Text Block to widget with params: {params}')
             response = unreal.send_command('add_text_block_to_widget', params)
             if not response:
@@ -100,7 +102,7 @@ def register_umg_tools(mcp: FastMCP):
             if not unreal:
                 logger.error('Failed to connect to Unreal Engine')
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            params = {'widget_name': widget_name, 'button_name': button_name, 'text': text, 'position': position, 'size': size, 'font_size': font_size, 'color': color, 'background_color': background_color}
+            params = {'blueprint_name': widget_name, 'widget_name': button_name, 'text': text, 'position': position, 'size': size, 'font_size': font_size, 'color': color, 'background_color': background_color}
             logger.info(f'Adding Button to widget with params: {params}')
             response = unreal.send_command('add_button_to_widget', params)
             if not response:
@@ -134,7 +136,7 @@ def register_umg_tools(mcp: FastMCP):
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
             if not function_name:
                 function_name = f'{widget_component_name}_{event_name}'
-            params = {'widget_name': widget_name, 'widget_component_name': widget_component_name, 'event_name': event_name, 'function_name': function_name}
+            params = {'blueprint_name': widget_name, 'widget_name': widget_component_name, 'event_name': event_name, 'function_name': function_name, 'widget_component_name': widget_component_name}
             logger.info(f'Binding widget event with params: {params}')
             response = unreal.send_command('bind_widget_event', params)
             if not response:
@@ -164,7 +166,7 @@ def register_umg_tools(mcp: FastMCP):
             if not unreal:
                 logger.error('Failed to connect to Unreal Engine')
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            params = {'widget_name': widget_name, 'z_order': z_order}
+            params = {'blueprint_name': widget_name, 'z_order': z_order}
             logger.info(f'Adding widget to viewport with params: {params}')
             response = unreal.send_command('add_widget_to_viewport', params)
             if not response:
@@ -196,7 +198,7 @@ def register_umg_tools(mcp: FastMCP):
             if not unreal:
                 logger.error('Failed to connect to Unreal Engine')
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            params = {'widget_name': widget_name, 'text_block_name': text_block_name, 'binding_property': binding_property, 'binding_type': binding_type}
+            params = {'blueprint_name': widget_name, 'widget_name': text_block_name, 'binding_name': binding_property, 'binding_type': binding_type}
             logger.info(f'Setting text block binding with params: {params}')
             response = unreal.send_command('set_text_block_binding', params)
             if not response:

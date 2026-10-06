@@ -514,6 +514,15 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCreateNiagaraEmitter(co
     FString PackageName = FolderPath / EmitterName;
     PackageName = UPackageTools::SanitizePackageName(PackageName);
 
+    // Guard identico a Audio/Sequencer: si el .uasset ya existe en disco,
+    // CreatePackage devuelve un paquete con IsFullyLoaded()==false
+    // (Package.cpp:316 GetFileSize()!=0) y SavePackage aborta el editor
+    // (crash #5: NE_MCPProbe.uasset de corridas anteriores).
+    if (FPackageName::DoesPackageExist(PackageName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("NiagaraEmitter '%s' already exists"), *EmitterName));
+    }
+
     UPackage* Package = CreatePackage(*PackageName);
     if (!Package)
     {
@@ -548,7 +557,16 @@ TSharedPtr<FJsonObject> FUnrealMCPNiagaraCommands::HandleCreateNiagaraEmitter(co
     FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
     SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-    bool bSaved = UPackage::SavePackage(Package, NewEmitter, *PackageFileName, SaveArgs);
+    // Defensa en profundidad: nunca SavePackage sin IsFullyLoaded (appError).
+    bool bSaved = false;
+    if (Package->IsFullyLoaded())
+    {
+        bSaved = UPackage::SavePackage(Package, NewEmitter, *PackageFileName, SaveArgs);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CreateNiagaraEmitter: package %s not fully loaded; skipping save"), *PackageName);
+    }
 
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetStringField(TEXT("emitter_path"), NewEmitter->GetPathName());

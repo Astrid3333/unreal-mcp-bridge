@@ -52,8 +52,31 @@ def register_component_tools(mcp: FastMCP):
             unreal = get_unreal_connection()
             if not unreal:
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            response = unreal.send_command('batch_get_component_properties', {'items': items})
-            return response or {}
+            results = []
+            all_ok = True
+            for item in items:
+                entry = {'actor_name': item.get('actor_name', ''),
+                         'component_name': item.get('component_name', ''),
+                         'property_path': item.get('property_path', '')}
+                try:
+                    resp = unreal.send_command('get_component_property', item) or {}
+                    inner = resp.get('result', resp) if isinstance(resp, dict) else {}
+                    if isinstance(inner, dict) and inner.get('success') is False:
+                        entry['success'] = False
+                        entry['error'] = inner.get('message', inner.get('error', 'unknown error'))
+                        all_ok = False
+                    elif isinstance(inner, dict) and 'value' in inner:
+                        entry['success'] = True
+                        entry['value'] = inner['value']
+                    else:
+                        entry['success'] = True
+                        entry['value'] = inner
+                except Exception as e:
+                    entry['success'] = False
+                    entry['error'] = str(e)
+                    all_ok = False
+                results.append(entry)
+            return {'success': all_ok, 'results': results}
         except Exception as e:
             return {'success': False, 'message': f'Error batch-getting component properties: {e}'}
     def _batch_set_component_properties(ctx: Context, items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -67,8 +90,29 @@ def register_component_tools(mcp: FastMCP):
             unreal = get_unreal_connection()
             if not unreal:
                 return {'success': False, 'message': 'Failed to connect to Unreal Engine'}
-            response = unreal.send_command('batch_set_component_properties', {'items': items})
-            return response or {}
+            results = []
+            all_ok = True
+            for item in items:
+                entry = {'actor_name': item.get('actor_name', ''),
+                         'component_name': item.get('component_name', ''),
+                         'property_path': item.get('property_path', '')}
+                try:
+                    params = {k: v for k, v in item.items() if k != 'value'}
+                    params['value'] = item.get('value')
+                    resp = unreal.send_command('set_actor_component_property', params) or {}
+                    inner = resp.get('result', resp) if isinstance(resp, dict) else {}
+                    if isinstance(inner, dict) and inner.get('success') is False:
+                        entry['success'] = False
+                        entry['error'] = inner.get('message', inner.get('error', 'unknown error'))
+                        all_ok = False
+                    else:
+                        entry['success'] = True
+                except Exception as e:
+                    entry['success'] = False
+                    entry['error'] = str(e)
+                    all_ok = False
+                results.append(entry)
+            return {'success': all_ok, 'results': results}
         except Exception as e:
             return {'success': False, 'message': f'Error batch-setting component properties: {e}'}
     ACTIONS = {

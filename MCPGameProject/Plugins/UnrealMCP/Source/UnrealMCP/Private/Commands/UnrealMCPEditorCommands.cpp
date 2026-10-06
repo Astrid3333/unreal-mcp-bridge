@@ -7,6 +7,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Engine.h"
 #include "Commands/UnrealMCPCommonUtils.h"
+#include "Commands/UnrealMCPFoliageCommands.h"
 #include "Editor.h"
 #include "Editor/Transactor.h"
 #include "FileHelpers.h"
@@ -877,6 +878,10 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleTakeScreenshot(const TSh
     return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to take screenshot"));
 } 
 
+// Definida mas abajo (junto a HandleCreateMaterial); usada aqui para crear
+// el asset de foliage type en disco.
+static UPackage* LoadOrCreateAssetPackage(const FString& PackageName, FString& OutErrorMsg);
+
 TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnFoliageInstances(const TSharedPtr<FJsonObject>& Params)
 {
     FString MeshPath;
@@ -932,12 +937,48 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSpawnFoliageInstances(co
     }
     UWorld* World = GWorld;
 
-    UFoliageType_InstancedStaticMesh* FoliageType = NewObject<UFoliageType_InstancedStaticMesh>(GetTransientPackage());
-    FoliageType->SetStaticMesh(Mesh);
-    AInstancedFoliageActor* IFA = AInstancedFoliageActor::GetInstancedFoliageActorForLevel(World->GetCurrentLevel(), /*bCreateIfNone=*/true);
+    // Asset en disco en lugar de NewObject transitorio: AddMesh hace
+    // check(!IsPartitionedWorld() || InType->IsAsset()) (InstancedFoliage.cpp:3860)
+    // y un transient package no sobrevive a un reload del nivel.
+    const FString TypeBaseName = FString::Printf(TEXT("FT_%s"), *Mesh->GetName());
+    FString FoliagePackageName = FString::Printf(TEXT("/Game/MCPTests/Foliage/%s"), *TypeBaseName);
+    FoliagePackageName = UPackageTools::SanitizePackageName(FoliagePackageName);
+    FString PackageErrorMsg;
+    UPackage* FoliagePackage = LoadOrCreateAssetPackage(FoliagePackageName, PackageErrorMsg);
+    if (!FoliagePackage)
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(PackageErrorMsg);
+    }
+    UFoliageType_InstancedStaticMesh* FoliageType =
+        FindObject<UFoliageType_InstancedStaticMesh>(FoliagePackage, *TypeBaseName);
+    if (FoliageType && FoliageType->GetStaticMesh() != Mesh)
+    {
+        // Colision de nombre con otro mesh: sufijo determinista por path.
+        const FString UniqueName = FString::Printf(TEXT("%s_%08X"), *TypeBaseName, GetTypeHash(MeshPath));
+        FoliageType = FindObject<UFoliageType_InstancedStaticMesh>(FoliagePackage, *UniqueName);
+        if (!FoliageType)
+        {
+            FoliageType = NewObject<UFoliageType_InstancedStaticMesh>(FoliagePackage, FName(*UniqueName),
+                                                                     RF_Standalone | RF_Public);
+            FoliageType->SetStaticMesh(Mesh);
+            FAssetRegistryModule::AssetCreated(FoliageType);
+            FoliagePackage->MarkPackageDirty();
+        }
+    }
+    else if (!FoliageType)
+    {
+        FoliageType = NewObject<UFoliageType_InstancedStaticMesh>(FoliagePackage, FName(*TypeBaseName),
+                                                                 RF_Standalone | RF_Public);
+        FoliageType->SetStaticMesh(Mesh);
+        FAssetRegistryModule::AssetCreated(FoliageType);
+        FoliagePackage->MarkPackageDirty();
+    }
+
+    FString FoliageErr;
+    AInstancedFoliageActor* IFA = FUnrealMCPFoliageCommands::GetOrCreateFoliageActor(FoliageErr);
     if (!IFA)
     {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get or create InstancedFoliageActor for level"));
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FoliageErr);
     }
     FFoliageInfo* FoliageInfo = IFA->FindOrAddMesh(FoliageType);
     if (!FoliageInfo)
@@ -1294,8 +1335,26 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleDuplicateActor(const TSh
     FTransform NewTransform = SourceActor->GetActorTransform();
     NewTransform.SetLocation(NewTransform.GetLocation() + Offset);
 
+    // El label se decide ANTES del spawn: SpawnParams.Name = FinalLabel para que
+    // el FName del actor coincida con el label del editor (attach/find por nombre
+    // o label funcionan igual).
+    FString FinalLabel = NewActorName.IsEmpty() ? (SourceActorName + TEXT("_Copy")) : NewActorName;
+
+    // Spawn con nombre explicito + construction diferido:
+    // - NameMode Requested: si el FName ya existe genera uno con sufijo (el
+    //   default Required_Fatal abortaria el editor).
+    // - bDeferConstruction: los construction scripts corren en FinishSpawning,
+    //   despues de copiar las propiedades.
+    // - CopyPropertiesForUnrelatedObjects exige components NO registrados
+    //   (ensure UnrealEngine.cpp:16828). PostSpawnInitialize llama
+    //   RegisterAllComponents() aunque bDeferConstruction sea true
+    //   (Actor.cpp:3787), asi que se desregistran a mano antes de copiar y se
+    //   re-registran despues — mismo patron que KismetReinstanceUtilities.
     FActorSpawnParameters SpawnParams;
+    SpawnParams.Name = FName(*FinalLabel);
+    SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Requested;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    SpawnParams.bDeferConstruction = true;
 
     AActor* NewActor = GWorld->SpawnActor<AActor>(SourceActor->GetClass(), NewTransform, SpawnParams);
     if (!NewActor)
@@ -1303,17 +1362,27 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleDuplicateActor(const TSh
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to spawn duplicated actor"));
     }
 
+    NewActor->UnregisterAllComponents();
+
     // Copia mesh, materiales y demas propiedades del actor original (mismo mecanismo
     // que usa el editor internamente al duplicar objetos no relacionados por herencia directa)
     UEngine::CopyPropertiesForUnrelatedObjects(SourceActor, NewActor);
+
+    if (NewActor->GetWorld() && NewActor->GetWorld()->bIsWorldInitialized)
+    {
+        NewActor->RegisterAllComponents();
+    }
+    UGameplayStatics::FinishSpawningActor(NewActor, NewTransform);
     NewActor->SetActorTransform(NewTransform);
 
-    FString FinalLabel = NewActorName.IsEmpty() ? (SourceActorName + TEXT("_Copy")) : NewActorName;
     NewActor->SetActorLabel(FinalLabel);
 
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetStringField(TEXT("source_actor"), SourceActorName);
-    ResultObj->SetStringField(TEXT("new_actor"), NewActor->GetActorLabel());
+    // GetName() real: si el FName pedido ya existia, SpawnParams.NameMode
+    // Requested genera un FName con sufijo y el label no refleja ese nombre.
+    ResultObj->SetStringField(TEXT("new_actor"), NewActor->GetName());
+    ResultObj->SetStringField(TEXT("new_actor_label"), NewActor->GetActorLabel());
     ResultObj->SetBoolField(TEXT("success"), true);
     return ResultObj;
 }
@@ -1394,16 +1463,29 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleAttachActorToActor(const
         Rule = EAttachmentRule::SnapToTarget;
     }
 
+    // Fuzzy: exacto por GetName() o GetActorLabel() primero; si no, prefijo de
+    // GetName(). El harness renombra/usa labels del editor que no siempre
+    // coinciden con el FName (p. ej. tras duplicate con nombre ya existente).
     AActor* ChildActor = nullptr;
+    AActor* ChildPartial = nullptr;
     AActor* ParentActor = nullptr;
+    AActor* ParentPartial = nullptr;
+    auto MatchesExact = [](AActor* A, const FString& N) -> bool
+    {
+        return A->GetName() == N || A->GetActorLabel() == N;
+    };
     TArray<AActor*> AllActors;
     UGameplayStatics::GetAllActorsOfClass(GWorld, AActor::StaticClass(), AllActors);
     for (AActor* Actor : AllActors)
     {
         if (!Actor) continue;
-        if (Actor->GetName() == ChildName) { ChildActor = Actor; }
-        if (Actor->GetName() == ParentName) { ParentActor = Actor; }
+        if (MatchesExact(Actor, ChildName)) { ChildActor = Actor; }
+        else if (!ChildPartial && Actor->GetName().StartsWith(ChildName)) { ChildPartial = Actor; }
+        if (MatchesExact(Actor, ParentName)) { ParentActor = Actor; }
+        else if (!ParentPartial && Actor->GetName().StartsWith(ParentName)) { ParentPartial = Actor; }
     }
+    if (!ChildActor) { ChildActor = ChildPartial; }
+    if (!ParentActor) { ParentActor = ParentPartial; }
     if (!ChildActor)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ChildName));
@@ -1417,13 +1499,51 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleAttachActorToActor(const
     bool bSuccess = ChildActor->AttachToActor(ParentActor, TransformRules, FName(*SocketName));
 
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("actor"), ChildName);
-    ResultObj->SetStringField(TEXT("parent"), ParentName);
+    ResultObj->SetStringField(TEXT("actor"), ChildActor->GetName());
+    ResultObj->SetStringField(TEXT("parent"), ParentActor->GetName());
     ResultObj->SetStringField(TEXT("attachment_rule"), RuleString);
     ResultObj->SetBoolField(TEXT("success"), bSuccess);
     return ResultObj;
 }
 
+
+// Carga (si ya existe en disco) o crea un package de asset.
+// Un package recien creado con CreatePackage sobre un archivo que YA existe
+// queda con IsFullyLoaded()==false (Package.cpp:316, bHasBeenFullyLoaded=false
+// y GetFileSize()!=0) y aborta el editor al guardarse (SavePackage2.cpp:195
+// -> ESavePackageResult::Error). Ese era el crash del run 2 del harness en
+// actor_create_material. LoadPackage marcа el package fully-loaded al
+// terminar (LinkerLoad -> MarkAsFullyLoaded), por eso se carga en vez de
+// crearlo. No usar FullyLoad() aqui: la carga explicita con LoadPackage es
+// la misma via y queda mas clara.
+static UPackage* LoadOrCreateAssetPackage(const FString& PackageName, FString& OutErrorMsg)
+{
+    UPackage* Package = FindPackage(nullptr, *PackageName);
+    if (!Package || !Package->IsFullyLoaded())
+    {
+        if (FPackageName::DoesPackageExist(PackageName))
+        {
+            Package = LoadPackage(nullptr, *PackageName, LOAD_None);
+        }
+    }
+    if (!Package)
+    {
+        Package = CreatePackage(*PackageName);
+    }
+    if (!Package)
+    {
+        OutErrorMsg = FString::Printf(TEXT("Failed to create package: %s"), *PackageName);
+        return nullptr;
+    }
+    if (!Package->IsFullyLoaded())
+    {
+        OutErrorMsg = FString::Printf(
+            TEXT("Package '%s' is not fully loaded; refusing to save it (would clobber on-disk content)"),
+            *PackageName);
+        return nullptr;
+    }
+    return Package;
+}
 
 TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMaterial(const TSharedPtr<FJsonObject>& Params)
 {
@@ -1455,15 +1575,45 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMaterial(const TSh
     FString PackageName = FolderPath / MaterialName;
     PackageName = UPackageTools::SanitizePackageName(PackageName);
 
-    UPackage* Package = CreatePackage(*PackageName);
+    FString PackageErrorMsg;
+    UPackage* Package = LoadOrCreateAssetPackage(PackageName, PackageErrorMsg);
     if (!Package)
     {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for material"));
+        return FUnrealMCPCommonUtils::CreateErrorResponse(PackageErrorMsg);
     }
 
-    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-    UMaterial* NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
-        UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+    // Reusar la si ya existe (disco o memoria): reconstruir en sitio
+    // conserva las referencias de actores que ya la tengan asignada.
+    bool bNewlyCreated = false;
+    UMaterial* NewMaterial = FindObject<UMaterial>(Package, *MaterialName);
+    if (NewMaterial)
+    {
+        for (UMaterialExpression* OldExpr : NewMaterial->GetExpressions())
+        {
+            if (OldExpr)
+            {
+                OldExpr->Rename(nullptr, GetTransientPackage(),
+                    REN_DontCreateRedirectors | REN_ForceGlobalUnique);
+            }
+        }
+        NewMaterial->GetExpressionCollection().Empty();
+        UMaterialEditorOnlyData* EditorOnly = NewMaterial->GetEditorOnlyData();
+        if (EditorOnly)
+        {
+            EditorOnly->BaseColor.Expression = nullptr;
+            EditorOnly->Roughness.Expression = nullptr;
+            EditorOnly->Metallic.Expression = nullptr;
+            EditorOnly->Normal.Expression = nullptr;
+            EditorOnly->AmbientOcclusion.Expression = nullptr;
+        }
+    }
+    else
+    {
+        UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+        NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+            UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+        bNewlyCreated = true;
+    }
 
     if (!NewMaterial)
     {
@@ -1494,9 +1644,18 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMaterial(const TSh
     NewMaterial->PreEditChange(nullptr);
     NewMaterial->PostEditChange();
     NewMaterial->MarkPackageDirty();
-    FAssetRegistryModule::AssetCreated(NewMaterial);
+    if (bNewlyCreated)
+    {
+        FAssetRegistryModule::AssetCreated(NewMaterial);
+    }
 
     // Guardar el .uasset a disco para que sobreviva un reinicio del editor
+    if (!Package->IsFullyLoaded())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Package '%s' is not fully loaded; save cancelado para no perder contenido en disco"),
+            *PackageName));
+    }
     FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
     SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
@@ -1628,6 +1787,12 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleSetMaterialBlendMode(con
     Material->MarkPackageDirty();
 
     UPackage* Package = Material->GetOutermost();
+    if (!Package->IsFullyLoaded())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Package '%s' is not fully loaded; save cancelado para no perder contenido en disco"),
+            *Package->GetName()));
+    }
     FString PackageFileName = FPackageName::LongPackageNameToFilename(
         Package->GetName(), FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
@@ -1685,15 +1850,45 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMossStoneMaterial(
     FString PackageName = FolderPath / MaterialName;
     PackageName = UPackageTools::SanitizePackageName(PackageName);
 
-    UPackage* Package = CreatePackage(*PackageName);
+    FString PackageErrorMsg;
+    UPackage* Package = LoadOrCreateAssetPackage(PackageName, PackageErrorMsg);
     if (!Package)
     {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for material"));
+        return FUnrealMCPCommonUtils::CreateErrorResponse(PackageErrorMsg);
     }
 
-    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-    UMaterial* NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
-        UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+    // Reusar la si ya existe (disco o memoria): reconstruir en sitio
+    // conserva las referencias de actores que ya la tengan asignada.
+    bool bNewlyCreated = false;
+    UMaterial* NewMaterial = FindObject<UMaterial>(Package, *MaterialName);
+    if (NewMaterial)
+    {
+        for (UMaterialExpression* OldExpr : NewMaterial->GetExpressions())
+        {
+            if (OldExpr)
+            {
+                OldExpr->Rename(nullptr, GetTransientPackage(),
+                    REN_DontCreateRedirectors | REN_ForceGlobalUnique);
+            }
+        }
+        NewMaterial->GetExpressionCollection().Empty();
+        UMaterialEditorOnlyData* EditorOnly = NewMaterial->GetEditorOnlyData();
+        if (EditorOnly)
+        {
+            EditorOnly->BaseColor.Expression = nullptr;
+            EditorOnly->Roughness.Expression = nullptr;
+            EditorOnly->Metallic.Expression = nullptr;
+            EditorOnly->Normal.Expression = nullptr;
+            EditorOnly->AmbientOcclusion.Expression = nullptr;
+        }
+    }
+    else
+    {
+        UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+        NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+            UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+        bNewlyCreated = true;
+    }
 
     if (!NewMaterial)
     {
@@ -1778,8 +1973,17 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreateMossStoneMaterial(
     NewMaterial->PreEditChange(nullptr);
     NewMaterial->PostEditChange();
     NewMaterial->MarkPackageDirty();
-    FAssetRegistryModule::AssetCreated(NewMaterial);
+    if (bNewlyCreated)
+    {
+        FAssetRegistryModule::AssetCreated(NewMaterial);
+    }
 
+    if (!Package->IsFullyLoaded())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Package '%s' is not fully loaded; save cancelado para no perder contenido en disco"),
+            *PackageName));
+    }
     FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
     SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
@@ -1895,15 +2099,45 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreatePBRMaterial(const 
     FString PackageName = FolderPath / MaterialName;
     PackageName = UPackageTools::SanitizePackageName(PackageName);
 
-    UPackage* Package = CreatePackage(*PackageName);
+    FString PackageErrorMsg;
+    UPackage* Package = LoadOrCreateAssetPackage(PackageName, PackageErrorMsg);
     if (!Package)
     {
-        return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create package for material"));
+        return FUnrealMCPCommonUtils::CreateErrorResponse(PackageErrorMsg);
     }
 
-    UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-    UMaterial* NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
-        UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+    // Reusar la si ya existe (disco o memoria): reconstruir en sitio
+    // conserva las referencias de actores que ya la tengan asignada.
+    bool bNewlyCreated = false;
+    UMaterial* NewMaterial = FindObject<UMaterial>(Package, *MaterialName);
+    if (NewMaterial)
+    {
+        for (UMaterialExpression* OldExpr : NewMaterial->GetExpressions())
+        {
+            if (OldExpr)
+            {
+                OldExpr->Rename(nullptr, GetTransientPackage(),
+                    REN_DontCreateRedirectors | REN_ForceGlobalUnique);
+            }
+        }
+        NewMaterial->GetExpressionCollection().Empty();
+        UMaterialEditorOnlyData* EditorOnly = NewMaterial->GetEditorOnlyData();
+        if (EditorOnly)
+        {
+            EditorOnly->BaseColor.Expression = nullptr;
+            EditorOnly->Roughness.Expression = nullptr;
+            EditorOnly->Metallic.Expression = nullptr;
+            EditorOnly->Normal.Expression = nullptr;
+            EditorOnly->AmbientOcclusion.Expression = nullptr;
+        }
+    }
+    else
+    {
+        UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+        NewMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+            UMaterial::StaticClass(), Package, FName(*MaterialName), RF_Standalone | RF_Public, nullptr, GWarn));
+        bNewlyCreated = true;
+    }
     if (!NewMaterial)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to create material asset"));
@@ -1967,8 +2201,17 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleCreatePBRMaterial(const 
     NewMaterial->PreEditChange(nullptr);
     NewMaterial->PostEditChange();
     NewMaterial->MarkPackageDirty();
-    FAssetRegistryModule::AssetCreated(NewMaterial);
+    if (bNewlyCreated)
+    {
+        FAssetRegistryModule::AssetCreated(NewMaterial);
+    }
 
+    if (!Package->IsFullyLoaded())
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Package '%s' is not fully loaded; save cancelado para no perder contenido en disco"),
+            *PackageName));
+    }
     FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
     SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;

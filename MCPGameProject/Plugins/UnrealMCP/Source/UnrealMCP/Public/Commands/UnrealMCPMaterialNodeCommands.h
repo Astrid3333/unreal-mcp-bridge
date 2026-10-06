@@ -49,6 +49,22 @@ private:
     TSharedPtr<FJsonObject> HandleSetMaterialExpressionConstant(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListAvailableExpressionTypes(const TSharedPtr<FJsonObject>& Params);
 
+    // Ciclo de vida de nodos + introspeccion de detalle. create_empty_material
+    // es el material "en blanco" que alimenta al resto (add_material_expression
+    // exige un material ya existente); delete/set_property/get/disconnect/save
+    // completan el CRUD del grafo.
+    TSharedPtr<FJsonObject> HandleCreateEmptyMaterial(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDeleteMaterialExpression(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetMaterialExpressionProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetMaterialExpression(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDisconnectMaterialInput(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSaveMaterial(const TSharedPtr<FJsonObject>& Params);
+
+    // Devuelve el expression_type del mapa EXPRESSION_TYPES para una clase
+    // (inverse de ResolveExpressionClass), o vacio si la clase no esta en el
+    // mapa (nodos que llegaron por otros caminos, ej. una creacion previa).
+    FString GetExpressionTypeForClass(UClass* Class) const;
+
     // Crea la UMaterialExpression correspondiente a expression_type (ver
     // EXPRESSION_TYPES en el .cpp para la lista de nombres soportados).
     UMaterialExpression* CreateExpressionByType(UMaterial* Material, const FString& ExpressionType, const FString& NodeId, FString& OutError);

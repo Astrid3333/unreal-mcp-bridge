@@ -1,6 +1,8 @@
 #include "Commands/UnrealMCPFoliageCommands.h"
 #include "Commands/UnrealMCPCommonUtils.h"
 #include "Editor.h"
+#include "Engine/World.h"
+#include "Engine/Level.h"
 #include "Engine/StaticMesh.h"
 #include "FoliageType_InstancedStaticMesh.h"
 #include "InstancedFoliageActor.h"
@@ -35,7 +37,20 @@ AInstancedFoliageActor* FUnrealMCPFoliageCommands::GetOrCreateFoliageActor(FStri
         OutError = TEXT("No active editor world");
         return nullptr;
     }
-    AInstancedFoliageActor* IFA = AInstancedFoliageActor::GetInstancedFoliageActorForCurrentLevel(World, true);
+    // Réplica de AInstancedFoliageActor::GetInstancedFoliageActorForLevel
+    // (InstancedFoliage.cpp:2934-2956) SIN el ensure de IsLevelPartition():
+    // en un proyecto sin World Partition ese ensure dispara (log del run 2,
+    // 03:59:58) aunque la operación en sí puede seguir — el resto del cuerpo
+    // es idéntico. ULevel::InstancedFoliageActor es público (Level.h:689).
+    ULevel* Level = World->GetCurrentLevel();
+    AInstancedFoliageActor* IFA = Level ? Level->InstancedFoliageActor.Get() : nullptr;
+    if (!IFA && Level)
+    {
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.OverrideLevel = Level;
+        IFA = Level->GetWorld()->SpawnActor<AInstancedFoliageActor>(SpawnParams);
+        Level->InstancedFoliageActor = IFA;
+    }
     if (!IFA)
     {
         OutError = TEXT("Failed to get or create InstancedFoliageActor for current level");
@@ -81,6 +96,14 @@ TSharedPtr<FJsonObject> FUnrealMCPFoliageCommands::HandleCreateFoliageType(const
 
     FString PackageName = FolderPath / FoliageTypeName;
     PackageName = UPackageTools::SanitizePackageName(PackageName);
+
+    // Guard identico a Audio/Sequencer/Niagara: si el .uasset ya existe en
+    // disco, CreatePackage deja IsFullyLoaded()==false y SavePackage aborta
+    // el editor (mismo crash que #5 en Niagara).
+    if (FPackageName::DoesPackageExist(PackageName))
+    {
+        return FUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("FoliageType '%s' already exists"), *FoliageTypeName));
+    }
 
     UPackage* Package = CreatePackage(*PackageName);
     if (!Package)
@@ -134,7 +157,16 @@ TSharedPtr<FJsonObject> FUnrealMCPFoliageCommands::HandleCreateFoliageType(const
     FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
     FSavePackageArgs SaveArgs;
     SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-    bool bSaved = UPackage::SavePackage(Package, NewFoliageType, *PackageFileName, SaveArgs);
+    // Defensa en profundidad: nunca SavePackage sin IsFullyLoaded (appError).
+    bool bSaved = false;
+    if (Package->IsFullyLoaded())
+    {
+        bSaved = UPackage::SavePackage(Package, NewFoliageType, *PackageFileName, SaveArgs);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CreateFoliageType: package %s not fully loaded; skipping save"), *PackageName);
+    }
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);

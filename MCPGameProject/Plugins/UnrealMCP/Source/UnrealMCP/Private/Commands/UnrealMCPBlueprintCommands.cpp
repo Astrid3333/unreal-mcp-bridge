@@ -537,6 +537,13 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetComponentProperty(
                 *PropertyName, *Property->GetCPPType());
         }
 
+        // Direccion del valor dentro del contenedor. SetIntPropertyValue /
+        // SetFloatingPointPropertyValue esperan la direccion DEL VALOR, no el
+        // objeto: pasar ComponentTemplate escribia en el offset 0 = VPTR del
+        // objeto y corrompia la vtable (crash SIGSEGV en la siguiente llamada
+        // virtual). Ver crash #4 (Mobility=Static -> set_physics_properties).
+        void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(ComponentTemplate);
+
         bool bSuccess = false;
         FString ErrorMessage;
 
@@ -624,7 +631,7 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetComponentProperty(
                         {
                             UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Found enum value: %lld"), EnumValue);
                             EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(
-                                ComponentTemplate, 
+                                PropertyValuePtr, 
                                 EnumValue
                             );
                             bSuccess = true;
@@ -658,7 +665,7 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetComponentProperty(
                     int64 EnumValue = JsonValue->AsNumber();
                     UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Setting enum from number: %lld"), EnumValue);
                     EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(
-                        ComponentTemplate, 
+                        PropertyValuePtr, 
                         EnumValue
                     );
                     bSuccess = true;
@@ -666,6 +673,63 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetComponentProperty(
                 else
                 {
                     ErrorMessage = TEXT("Enum property requires either a string name or integer value");
+                    UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
+                }
+            }
+            else if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+            {
+                // FByteProperty ES FNumericProperty (hereda), pero cubre dos casos
+                // distintos: enum byte (EComponentMobility::Movable) y byte plano
+                // (0-255). Se comprueba ANTES de la rama numerica para aceptar el
+                // nombre del enum como string — era el bug de 'mobility'.
+                UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Property is a byte property"));
+                if (JsonValue->Type == EJson::String)
+                {
+                    FString ByteStr = JsonValue->AsString();
+                    UEnum* ByteEnum = ByteProp->GetIntPropertyEnum();
+                    if (ByteEnum)
+                    {
+                        int64 EnumValue = ByteEnum->GetValueByNameString(ByteStr);
+                        if (EnumValue != INDEX_NONE)
+                        {
+                            ByteProp->SetIntPropertyValue(PropertyValuePtr, EnumValue);
+                            bSuccess = true;
+                        }
+                        else
+                        {
+                            ErrorMessage = FString::Printf(TEXT("Invalid enum value '%s' for property %s"),
+                                *ByteStr, *PropertyName);
+                            UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
+                        }
+                    }
+                    else
+                    {
+                        ErrorMessage = FString::Printf(TEXT("Byte property '%s' requires a number value"), *PropertyName);
+                        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
+                    }
+                }
+                else if (JsonValue->Type == EJson::Number)
+                {
+                    int64 Value = (int64)JsonValue->AsNumber();
+                    if (Value < 0 || Value > 255)
+                    {
+                        ErrorMessage = FString::Printf(TEXT("Byte value out of range 0-255: %lld"), Value);
+                        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
+                    }
+                    else
+                    {
+                        ByteProp->SetIntPropertyValue(PropertyValuePtr, Value);
+                        bSuccess = true;
+                    }
+                }
+                else if (JsonValue->Type == EJson::Boolean)
+                {
+                    ByteProp->SetIntPropertyValue(PropertyValuePtr, JsonValue->AsBool() ? (int64)1 : (int64)0);
+                    bSuccess = true;
+                }
+                else
+                {
+                    ErrorMessage = TEXT("Byte property requires a number, boolean or enum-name string");
                     UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
                 }
             }
@@ -682,13 +746,13 @@ TSharedPtr<FJsonObject> FUnrealMCPBlueprintCommands::HandleSetComponentProperty(
                     
                     if (NumericProp->IsInteger())
                     {
-                        NumericProp->SetIntPropertyValue(ComponentTemplate, (int64)Value);
+                        NumericProp->SetIntPropertyValue(PropertyValuePtr, (int64)Value);
                         UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Set integer value: %lld"), (int64)Value);
                         bSuccess = true;
                     }
                     else if (NumericProp->IsFloatingPoint())
                     {
-                        NumericProp->SetFloatingPointPropertyValue(ComponentTemplate, Value);
+                        NumericProp->SetFloatingPointPropertyValue(PropertyValuePtr, Value);
                         UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Set float value: %f"), Value);
                         bSuccess = true;
                     }

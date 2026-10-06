@@ -20,6 +20,7 @@
 #include "Engine/Selection.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Misc/Paths.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "BlueprintNodeSpawner.h"
 #include "BlueprintActionDatabase.h"
@@ -153,8 +154,52 @@ UBlueprint* FUnrealMCPCommonUtils::FindBlueprint(const FString& BlueprintName)
 
 UBlueprint* FUnrealMCPCommonUtils::FindBlueprintByName(const FString& BlueprintName)
 {
-    FString AssetPath = TEXT("/Game/Blueprints/") + BlueprintName;
-    return LoadObject<UBlueprint>(nullptr, *AssetPath);
+    if (BlueprintName.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    // Full path provided by the caller: never prefix it (prefixing produced
+    // paths like "/Game/Blueprints//Game/..." whose double slashes crash
+    // CreatePackage with a fatal error).
+    if (BlueprintName.StartsWith(TEXT("/")))
+    {
+        FString Path = BlueprintName;
+        while (Path.Contains(TEXT("//")))
+        {
+            Path.ReplaceInline(TEXT("//"), TEXT("/"));
+        }
+
+        if (UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *Path))
+        {
+            return BP;
+        }
+        if (Path.Contains(TEXT(".")))
+        {
+            return nullptr;
+        }
+        const FString ObjectPath = Path + TEXT(".") + FPaths::GetCleanFilename(Path);
+        return LoadObject<UBlueprint>(nullptr, *ObjectPath);
+    }
+
+    // Short name: find it anywhere under /Game via the asset registry.
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+    Filter.PackagePaths.Add(FName(TEXT("/Game")));
+    Filter.bRecursivePaths = true;
+    TArray<FAssetData> Assets;
+    AssetRegistryModule.Get().GetAssets(Filter, Assets);
+    for (const FAssetData& Asset : Assets)
+    {
+        if (Asset.AssetName.ToString() == BlueprintName)
+        {
+            return Cast<UBlueprint>(Asset.GetAsset());
+        }
+    }
+
+    // Legacy default location as a final fallback.
+    return LoadObject<UBlueprint>(nullptr, *(TEXT("/Game/Blueprints/") + BlueprintName));
 }
 
 UEdGraph* FUnrealMCPCommonUtils::FindOrCreateEventGraph(UBlueprint* Blueprint)
@@ -719,6 +764,11 @@ static bool SetObjectPropertyImpl(UObject* Object, const FString& PropertyName,
     else if (Property->IsA<FTextProperty>())
     {
         ((FTextProperty*)Property)->SetPropertyValue(PropertyAddr, FText::FromString(Value->AsString()));
+        return true;
+    }
+    else if (Property->IsA<FNameProperty>())
+    {
+        ((FNameProperty*)Property)->SetPropertyValue(PropertyAddr, FName(*Value->AsString()));
         return true;
     }
     else if (Property->IsA<FStructProperty>())

@@ -407,7 +407,13 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("set_material_output") ||
                      CommandType == TEXT("list_material_expressions") ||
                      CommandType == TEXT("set_material_expression_constant") ||
-                     CommandType == TEXT("list_available_expression_types"))
+                     CommandType == TEXT("list_available_expression_types") ||
+                     CommandType == TEXT("create_empty_material") ||
+                     CommandType == TEXT("delete_material_expression") ||
+                     CommandType == TEXT("set_material_expression_property") ||
+                     CommandType == TEXT("get_material_expression") ||
+                     CommandType == TEXT("disconnect_material_input") ||
+                     CommandType == TEXT("save_material"))
             {
                 ResultJson = MaterialNodeCommands->HandleCommand(CommandType, Params);
             }
