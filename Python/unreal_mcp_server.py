@@ -319,6 +319,7 @@ from tools.data_tools import register_data_tools
 from tools.game_tools import register_game_tools
 from tools.py_tools import register_python_tools
 from tools.editor_state_tools import register_editor_state_tools
+from tools.asset_tools import register_asset_tools
 
 # Register tools
 register_editor_tools(mcp)
@@ -342,6 +343,7 @@ register_data_tools(mcp)
 register_game_tools(mcp)
 register_python_tools(mcp)
 register_editor_state_tools(mcp)
+register_asset_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -586,6 +588,12 @@ def info():
       editor_undo / editor_redo (transacciones via GEditor->Trans),
       editor_save_level(path=..., content=...) y editor_open_level(path=...,
       discard_changes=...).
+
+    - `unreal_asset` (asset_tools.py) — assets de contenido:
+      asset_import(source_path=..., path=..., name=...) trae un archivo
+      del disco a /Game; asset_create(type="material"|"blueprint", name=...)
+      da de alta assets vacios; asset_find(name=..., class_=..., path=...)
+      busca en el AssetRegistry por subcadena, clase y ruta.
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`

@@ -52,6 +52,7 @@
 #include "Subsystems/EditorActorSubsystem.h"
 // Include our new command handler classes
 #include "Commands/UnrealMCPEditorCommands.h"
+#include "Commands/UnrealMCPAssetCommands.h"
 #include "Commands/UnrealMCPBlueprintCommands.h"
 #include "Commands/UnrealMCPBlueprintNodeCommands.h"
 #include "Commands/UnrealMCPProjectCommands.h"
@@ -75,6 +76,7 @@
 UUnrealMCPBridge::UUnrealMCPBridge()
 {
     EditorCommands = MakeShared<FUnrealMCPEditorCommands>();
+    AssetCommands = MakeShared<FUnrealMCPAssetCommands>();
     BlueprintCommands = MakeShared<FUnrealMCPBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FUnrealMCPBlueprintNodeCommands>();
     ProjectCommands = MakeShared<FUnrealMCPProjectCommands>();
@@ -94,6 +96,7 @@ UUnrealMCPBridge::UUnrealMCPBridge()
 UUnrealMCPBridge::~UUnrealMCPBridge()
 {
     EditorCommands.Reset();
+    AssetCommands.Reset();
     BlueprintCommands.Reset();
     BlueprintNodeCommands.Reset();
     ProjectCommands.Reset();
@@ -423,6 +426,12 @@ FString UUnrealMCPBridge::ExecuteCommand(const FString& CommandType, const TShar
                      CommandType == TEXT("list_foliage_types"))
             {
                 ResultJson = FoliageCommands->HandleCommand(CommandType, Params);
+            }
+            else if (CommandType == TEXT("import_asset") ||
+                     CommandType == TEXT("find_assets") ||
+                     CommandType == TEXT("create_asset"))
+            {
+                ResultJson = AssetCommands->HandleCommand(CommandType, Params);
             }
             else if (CommandType == TEXT("get_navmesh_info") ||
                      CommandType == TEXT("build_navigation") ||
