@@ -321,6 +321,7 @@ from tools.py_tools import register_python_tools
 from tools.editor_state_tools import register_editor_state_tools
 from tools.asset_tools import register_asset_tools
 from tools.ops_tools import register_batch_tools, register_wait_tools, register_log_tools
+from tools.trace_tools import register_trace_tools, install_trace_recording
 
 # Register tools
 register_editor_tools(mcp)
@@ -348,6 +349,7 @@ register_asset_tools(mcp)
 register_batch_tools(mcp)
 register_wait_tools(mcp)
 register_log_tools(mcp)
+register_trace_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
@@ -513,6 +515,7 @@ def _flatten_routers(server: FastMCP) -> int:
     return added
 
 FLATTENED_TOOLS = _flatten_routers(mcp)
+TRACE_RECORDED = install_trace_recording(mcp)
 
 @mcp.prompt()
 def info():
@@ -611,6 +614,12 @@ def info():
     - `unreal_log` (ops_tools.py) — log_get(limit, category, min_severity,
       contains, since_seq) lee el buffer circular (2000 lineas) del
       FOutputDevice del editor; log_clear() lo vacia.
+
+    - `unreal_trace` (trace_tools.py) — trace_get(limit, tool, ok,
+      since_seq) devuelve las ultimas llamadas a tools del servidor
+      (seq, time, args, result, dur_ms, ok) en un buffer circular de
+      1000; trace_clear() lo vacia. Se instala envolviendo Tool.fn tras
+      el registro; trace_* no se auto-registran.
 
     Al agregar un dominio nuevo (landscape, sequencer, niagara, audio, ai,
     data, build), seguir el mismo patron: un modulo `tools/xxx_tools.py`
