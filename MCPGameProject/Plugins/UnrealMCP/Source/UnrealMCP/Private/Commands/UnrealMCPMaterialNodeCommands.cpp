@@ -93,11 +93,11 @@ static UClass* ResolveExpressionClass(const FString& TypeName)
     return Found ? *Found : nullptr;
 }
 
-// Replica de LoadOrCreateAssetPackage de UnrealMCPEditorCommands.cpp: esa es
-// static (file-local) y no se puede llamar desde aca. Misma logica y mismo
+// LoadOrCreateAssetPackage de UnrealMCPEditorCommands.cpp es static (file-local)
+// y el modulo es unity: no se puede redefinir aqui. Misma logica y mismo
 // comentario: cargar si existe en disco (queda fully-loaded) o crear vacio;
 // nunca guardar un package nunca cargado (crash del run 2, SavePackage2.cpp:195).
-static UPackage* LoadOrCreateAssetPackage(const FString& PackageName, FString& OutErrorMsg)
+static UPackage* LoadOrCreateAssetPackageMatNode(const FString& PackageName, FString& OutErrorMsg)
 {
     UPackage* Package = FindPackage(nullptr, *PackageName);
     if (!Package || !Package->IsFullyLoaded())
@@ -833,7 +833,7 @@ TSharedPtr<FJsonObject> FUnrealMCPMaterialNodeCommands::HandleCreateEmptyMateria
     const FString PackageName = UPackageTools::SanitizePackageName(FolderPath / MaterialName);
 
     FString PackageErrorMsg;
-    UPackage* Package = LoadOrCreateAssetPackage(PackageName, PackageErrorMsg);
+    UPackage* Package = LoadOrCreateAssetPackageMatNode(PackageName, PackageErrorMsg);
     if (!Package)
         return FUnrealMCPCommonUtils::CreateErrorResponse(PackageErrorMsg);
 

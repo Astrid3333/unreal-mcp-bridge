@@ -767,8 +767,12 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleFocusViewport(const TSha
         HasOrientation = true;
     }
 
-    // Get the active viewport
-    FLevelEditorViewportClient* ViewportClient = (FLevelEditorViewportClient*)GEditor->GetActiveViewport()->GetClient();
+    // Get the active viewport. Crash #6: en una instancia fresca el tab del
+    // LevelEditor todavia no estaba activo (GetActiveViewport()==nullptr) y el
+    // deref leia nullptr+0x40 -> SIGSEGV. Helper con guard + fallback + apertura
+    // del tab si hace falta.
+    FLevelEditorViewportClient* ViewportClient =
+        FUnrealMCPCommonUtils::FindAnyLevelEditorViewportClient();
     if (!ViewportClient)
     {
         return FUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Failed to get active viewport"));
@@ -854,10 +858,11 @@ TSharedPtr<FJsonObject> FUnrealMCPEditorCommands::HandleTakeScreenshot(const TSh
         FilePath += TEXT(".png");
     }
 
-    // Get the active viewport
-    if (GEditor && GEditor->GetActiveViewport())
+    // Get the active viewport (mismo fix que focus_viewport: helper con guard +
+    // fallback + apertura del tab; para ReadPixels via SEditorViewport)
+    FViewport* Viewport = FUnrealMCPCommonUtils::GetAnyLevelEditorFViewport();
+    if (Viewport)
     {
-        FViewport* Viewport = GEditor->GetActiveViewport();
         TArray<FColor> Bitmap;
         FIntRect ViewportRect(0, 0, Viewport->GetSizeXY().X, Viewport->GetSizeXY().Y);
         

@@ -26,6 +26,13 @@
 #include "BlueprintActionDatabase.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Editor.h"
+#include "UnrealClient.h"
+#include "EditorViewportClient.h"
+#include "LevelEditorViewport.h"
+#include "SEditorViewport.h"
+#include "Slate/SceneViewport.h"
+#include "Framework/Docking/TabManager.h"
 
 // JSON Utilities
 TSharedPtr<FJsonObject> FUnrealMCPCommonUtils::CreateErrorResponse(const FString& Message)
@@ -1502,4 +1509,72 @@ bool FUnrealMCPCommonUtils::SetStructPropertyByPath(UScriptStruct* Struct, void*
     OutErrorMessage = FString::Printf(TEXT("Unsupported field type: %s for field %s"),
                                     *Property->GetClass()->GetName(), *PropertyPath);
     return false;
+}
+
+// =====================================================================
+// Viewport utilities (crash #6: GetActiveViewport() == nullptr en
+// instancia fresca -> deref de nullptr+0x40)
+// =====================================================================
+FLevelEditorViewportClient* FUnrealMCPCommonUtils::FindAnyLevelEditorViewportClient()
+{
+    auto TryGet = []() -> FLevelEditorViewportClient*
+    {
+        if (!GEditor)
+        {
+            return nullptr;
+        }
+        if (FViewport* ActiveVP = GEditor->GetActiveViewport())
+        {
+            if (FLevelEditorViewportClient* ActiveClient =
+                    (FLevelEditorViewportClient*)ActiveVP->GetClient())
+            {
+                return ActiveClient;
+            }
+        }
+        for (FLevelEditorViewportClient* Client : GEditor->GetLevelViewportClients())
+        {
+            if (Client)
+            {
+                return Client;
+            }
+        }
+        return nullptr;
+    };
+
+    if (FLevelEditorViewportClient* Client = TryGet())
+    {
+        return Client;
+    }
+
+    // CRASH #7: NO invocar TryInvokeTab aqui. Llamarlo mientras el editor aun
+    // esta inicializando (swapchain/layout en curso) provoca
+    // "FlushRenderingCommands called recursively" -> assert SharedPointer.h:1128
+    // -> SIGSEGV. El tab LevelEditor se instancia solo al terminar el arranque;
+    // el caller debe reintentar hasta que aparezca.
+    return nullptr;
+}
+
+FViewport* FUnrealMCPCommonUtils::GetAnyLevelEditorFViewport()
+{
+    if (GEditor)
+    {
+        if (FViewport* ActiveVP = GEditor->GetActiveViewport())
+        {
+            return ActiveVP;
+        }
+    }
+    FLevelEditorViewportClient* Client = FindAnyLevelEditorViewportClient();
+    if (Client)
+    {
+        TSharedPtr<SEditorViewport> Widget = Client->GetEditorViewportWidget();
+        if (Widget.IsValid())
+        {
+            TSharedPtr<FSceneViewport> SceneVP = Widget->GetSceneViewport();
+            if (SceneVP.IsValid())
+            {
+                return SceneVP.Get();
+            }
+        }
+    }
+    return nullptr;
 }

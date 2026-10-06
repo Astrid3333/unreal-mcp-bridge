@@ -191,8 +191,10 @@ uint32 FMCPServerRunnable::Run()
             }
         }
         
-        // Small sleep to prevent tight loop
-        FPlatformProcess::Sleep(0.1f);
+        // Small sleep to prevent tight loop (5 ms: antes 100 ms — cada comando
+        // reconecta y pagaba hasta 100 ms de espera; los batch de data_to_unreal
+        // con cientos de luces tardaban minutos)
+        FPlatformProcess::Sleep(0.005f);
     }
     
     UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Server thread stopping"));

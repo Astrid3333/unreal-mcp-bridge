@@ -1,4 +1,5 @@
 #include "Commands/UnrealMCPViewportCommands.h"
+#include "Commands/UnrealMCPCommonUtils.h"
 #include "Editor.h"
 #include "EditorViewportClient.h"
 #include "LevelEditorViewport.h"
@@ -41,15 +42,14 @@ static bool StringToViewMode(const FString& Str, EViewModeIndex& OutMode)
 
 FLevelEditorViewportClient* FUnrealMCPViewportCommands::GetActiveViewportClient(FString& OutError)
 {
-    if (!GEditor || !GEditor->GetActiveViewport())
-    {
-        OutError = TEXT("No active viewport");
-        return nullptr;
-    }
-    FLevelEditorViewportClient* ViewportClient = (FLevelEditorViewportClient*)GEditor->GetActiveViewport()->GetClient();
+    // Crash #6: GetActiveViewport() puede ser nullptr en instancias frescas
+    // (tab del LevelEditor sin activar). Helper con guard + fallback + apertura
+    // del tab via FGlobalTabmanager si hace falta.
+    FLevelEditorViewportClient* ViewportClient =
+        FUnrealMCPCommonUtils::FindAnyLevelEditorViewportClient();
     if (!ViewportClient)
     {
-        OutError = TEXT("Failed to get active viewport client");
+        OutError = TEXT("No active viewport");
         return nullptr;
     }
     return ViewportClient;

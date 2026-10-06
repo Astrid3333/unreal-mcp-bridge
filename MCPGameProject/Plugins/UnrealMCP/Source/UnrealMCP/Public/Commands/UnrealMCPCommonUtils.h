@@ -5,6 +5,8 @@
 
 // Forward declarations
 class AActor;
+class FLevelEditorViewportClient;
+class FViewport;
 class UBlueprint;
 class UEdGraph;
 class UEdGraphNode;
@@ -62,4 +64,14 @@ public:
                                  TSharedPtr<FJsonValue>& OutValue, FString& OutErrorMessage);
     static bool GetStructPropertyByPath(UScriptStruct* Struct, const void* StructPtr, const FString& PropertyPath,
                                  TSharedPtr<FJsonValue>& OutValue, FString& OutErrorMessage);
-}; 
+
+    // Viewport utilities (crash #6: GEditor->GetActiveViewport() era nullptr
+    // en una instancia fresca y el deref crasheaba)
+    // Devuelve el primer FLevelEditorViewportClient utilizable: activo, si no el
+    // primero instanciado; si no hay ninguno, intenta abrir el tab LevelEditor
+    // via FGlobalTabmanager y reintenta. nullptr si aun asi no hay viewport.
+    static FLevelEditorViewportClient* FindAnyLevelEditorViewportClient();
+    // FViewport para ReadPixels: el activo o el del cliente de arriba (via
+    // SEditorViewport::GetSceneViewport, subtipo de FViewport).
+    static FViewport* GetAnyLevelEditorFViewport();
+};
