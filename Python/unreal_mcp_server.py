@@ -79,50 +79,57 @@ class UnrealConnection:
         self.socket = None
         self.connected = False
 
-    def receive_full_response(self, sock, buffer_size=4096) -> bytes:
-        """Receive a complete response from Unreal, handling chunked data."""
-        chunks = []
+    # Ultimo byte que puede terminar un JSON valido (cierre de objeto o
+    # whitespace): solo ahi conviene intentar json.loads.
+    _JSON_MAY_END = b"} \t\r\n"
+
+    def receive_full_response(self, sock, buffer_size=65536) -> bytes:
+        """Receive a complete response from Unreal, handling chunked data.
+
+        MCPServerRunnable append '\\n' al JSON (pretty-print de una sola
+        respuestas) y aborta el envio si el buffer TCP se llena
+        (EWOULDBLOCK sin manejar) antes de cerrar la conexion: la
+        respuesta llega truncada y la conexion muere. El parseo por chunk
+        (json.loads sobre todo el acumulado, O(n^2)) era tan lento que
+        llenaba ese buffer; ahora solo se parsea cuando el ultimo byte
+        puede terminar un JSON. Un cierre con datos incompletos lanza
+        excepcion reintentable ("Connection closed...") en vez de caer a
+        un None implicito (bug: 'NoneType' object has no attribute
+        'decode').
+        """
+        buf = bytearray()
         sock.settimeout(30)  # 30 second timeout
         try:
             while True:
                 chunk = sock.recv(buffer_size)
                 if not chunk:
-                    if not chunks:
+                    if not buf:
                         raise Exception("Connection closed before receiving data")
-                    break
-                chunks.append(chunk)
-                
-                # Process the data received so far
-                data = b''.join(chunks)
-                decoded_data = data.decode('utf-8')
-                
-                # Try to parse as JSON to check if complete
+                    raise Exception(
+                        "Connection closed before receiving complete response "
+                        f"({len(buf)} bytes)"
+                    )
+                buf.extend(chunk)
+                if buf[-1] not in self._JSON_MAY_END:
+                    continue
+                # El buffer termina en ASCII: cualquier multibyte UTF-8
+                # anterior esta completo.
                 try:
-                    json.loads(decoded_data)
-                    logger.info(f"Received complete response ({len(data)} bytes)")
-                    return data
-                except json.JSONDecodeError:
-                    # Not complete JSON yet, continue reading
-                    logger.debug(f"Received partial response, waiting for more data...")
+                    json.loads(bytes(buf).decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     continue
-                except Exception as e:
-                    logger.warning(f"Error processing response chunk: {str(e)}")
-                    continue
+                logger.info(f"Received complete response ({len(buf)} bytes)")
+                return bytes(buf)
         except socket.timeout:
             logger.warning("Socket timeout during receive")
-            if chunks:
-                # If we have some data already, try to use it
-                data = b''.join(chunks)
+            if buf:
                 try:
-                    json.loads(data.decode('utf-8'))
-                    logger.info(f"Using partial response after timeout ({len(data)} bytes)")
-                    return data
-                except:
+                    json.loads(bytes(buf).decode('utf-8'))
+                    logger.info(f"Using partial response after timeout ({len(buf)} bytes)")
+                    return bytes(buf)
+                except Exception:
                     pass
             raise Exception("Timeout receiving Unreal response")
-        except Exception as e:
-            logger.error(f"Error during receive: {str(e)}")
-            raise
     
     # Errores de transporte que justifican reintentar el comando
     RETRYABLE_PHRASES = ("Connection closed", "Timeout", "timed out", "Errno", "Broken pipe", "reset by peer")
@@ -321,6 +328,7 @@ from tools.py_tools import register_python_tools
 from tools.editor_state_tools import register_editor_state_tools
 from tools.asset_tools import register_asset_tools
 from tools.ops_tools import register_batch_tools, register_wait_tools, register_log_tools
+from tools.automation_tools import register_automation_tools
 from tools.trace_tools import register_trace_tools, install_trace_recording
 
 # Register tools
@@ -350,6 +358,7 @@ register_batch_tools(mcp)
 register_wait_tools(mcp)
 register_log_tools(mcp)
 register_trace_tools(mcp)
+register_automation_tools(mcp)
 
 # Expone cada accion de cada router como tool individual.
 # Dos estilos en el repo:
