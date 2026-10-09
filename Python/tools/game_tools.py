@@ -98,8 +98,54 @@ def register_game_tools(mcp: FastMCP):
                                   "¿dialogo de Blueprints sin compilar?")
         return result
 
-    def play_stop(ctx: Context) -> Dict[str, Any]:
-        """Detiene la sesion PIE/SIE en curso (o cancela una encolada)."""
+    def play_stop(ctx: Context, force: bool = False,
+                  settle_timeout: float = 5.0) -> Dict[str, Any]:
+        """Detiene la sesion PIE/SIE en curso (o cancela una encolada).
+
+        Proteccion contra crash #8 del motor: si hay una peticion de juego
+        encolada pero la sesion no llega a 'playing' (p. ej. un dialogo de
+        errores de compilacion de Blueprint la bloquea), cancelar esa
+        peticion dejo el motor en estado inconsistente y lo tumbo al
+        cerrarse el dialogo (assert IsSet en StartQueuedPlaySessionRequestImpl).
+        En ese caso esta herramienta espera `settle_timeout` segundos a que
+        la sesion arranque o la peticion se resuelva; si sigue encolada
+        devuelve error y NO cancela.
+
+        Args:
+            force: cancelar la peticion encolada aunque no haya arrancado
+                (peligroso si el bloqueo es un dialogo modal).
+            settle_timeout: segundos maximos a esperar el arranque antes
+                de negar la cancelacion.
+        """
+        status = _send(ctx, "play_status", {})
+        if (not force and isinstance(status, dict)
+                and status.get("request_queued") and not status.get("playing")):
+            deadline = time.time() + max(0.5, float(settle_timeout))
+            blocked = True
+            while time.time() < deadline:
+                time.sleep(0.5)
+                status = _send(ctx, "play_status", {})
+                if not isinstance(status, dict):
+                    blocked = False
+                    break
+                if status.get("playing"):
+                    blocked = False
+                    break
+                if not status.get("request_queued"):
+                    return {"success": True, "already_stopped": True,
+                            "status": status}
+            if (blocked and isinstance(status, dict)
+                    and status.get("request_queued")
+                    and not status.get("playing")):
+                return {
+                    "success": False,
+                    "message": (
+                        f"Peticion de juego encolada sin arrancar tras {settle_timeout}s "
+                        "(dialogo de Blueprint sin compilar probable). No se cancelo "
+                        "para evitar el crash del motor. Cierre el dialogo y reintente, "
+                        "o use force=True para cancelar a ciegas."),
+                    "status": status,
+                }
         return _send(ctx, "play_stop", {})
 
     def play_status(ctx: Context) -> Dict[str, Any]:
