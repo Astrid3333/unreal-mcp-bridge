@@ -38,6 +38,7 @@ The Unreal MCP integration provides comprehensive tools for controlling Unreal E
 | **Niagara** | • Spawn Niagara systems and activate/deactivate components<br>• Set float, vector, and color user parameters<br>• Add and list user-exposed parameters |
 | **Sequencer** | • Create and open Level Sequences<br>• Add actors to a sequence and set the playback range<br>• Add camera cut tracks<br>• Keyframe transforms and arbitrary properties |
 | **AI / Navigation** | • Query navmesh info and rebuild navigation<br>• Find paths between points<br>• Create Behavior Trees and Blackboards; add blackboard keys<br>• Run a Behavior Tree on an actor |
+| **Automation Testing** | • List available Unreal Automation tests<br>• Run tests by filter and poll results<br>• Retry-safe transport for long-running responses |
 | **Editor Control** | • Focus viewport on specific actors or locations, with configurable distance and camera orientation<br>• Capture a screenshot of the active viewport |
 
 All these capabilities are accessible through natural language commands via AI assistants, making it easy to automate and control Unreal Engine workflows.
@@ -154,6 +155,39 @@ Depending on which MCP client you're using, the configuration file location will
 Each client uses the same JSON format as shown in the example above. 
 Simply place the configuration in the appropriate location for your MCP client.
 
+## 🧪 Automation Testing (fork additions)
+
+This fork adds a Python-only automation/test layer on top of the base project:
+
+- **`Python/tools/automation_tools.py`** — router `unreal_automation` with
+  `automation_list`, `automation_run` and `automation_results` (217 tools
+  registered in total). Runs Unreal's Automation framework through the MCP
+  bridge and polls for results with built-in retries.
+- **Framerate gate**: with the editor in background, CPU throttling stalls the
+  Automation queue. Set `bThrottleCPUWhenNotForeground=False` in
+  `EditorSettings.ini` before batch test runs.
+- **Console syntax**: `Automation Now; RunTests <filter>` (note: `RunTests Now`
+  is invalid); `Automation Now; List`.
+
+### Transport robustness
+
+- **Client-side response framing** (`receive_full_response`): accumulates into
+  a `bytearray` with 64KB reads and only parses JSON when the last byte can
+  terminate it; a socket closed mid-response raises a retryable exception
+  (3 attempts on a fresh connection) instead of returning `None`.
+- **Known server-side limitation**: the C++ send loop treats `EWOULDBLOCK` as
+  fatal, so responses >~174KB may be truncated on the first burst. Python
+  detects and retries; a full fix requires a C++ change in
+  `MCPServerRunnable.cpp`.
+
+### Editor play-session safety
+
+- **`game_play_stop` guard**: never cancels a queued-but-not-started play
+  request by default (that race crashed the editor — assert in
+  `StartQueuedPlaySessionRequestImpl` while a Blueprint compile-error dialog
+  was open). Pass `force=True` to cancel anyway.
+- **Crash avoidance**: never use `take_screenshot` (use
+  `take_high_res_screenshot`); never `Quit`/`SoftQuit` from tests.
 
 ## License
 MIT
